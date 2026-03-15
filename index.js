@@ -188,7 +188,7 @@ async function updateReturnRecord(returnRecordId, fields) {
 
 function mapOrderToSendcloudPayload({ orderFields, returnId }) {
   // Adjust these field names to your exact Airtable schema.
-  const customerName = asText(orderFields["Customer Name"]);
+  const customerName = asText(orderFields["Customer Name"]) || process.env.TEST_CUSTOMER_NAME;
   const companyName = asText(orderFields["Customer Company"]);
   const address1 = asText(orderFields["Shipping Address Line 1"]) || process.env.TEST_CUSTOMER_ADDRESS_1;
   const address2 = asText(orderFields["Shipping Address Line 2"]);
