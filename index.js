@@ -190,13 +190,13 @@ function mapOrderToSendcloudPayload({ orderFields, returnId }) {
   // Adjust these field names to your exact Airtable schema.
   const customerName = asText(orderFields["Customer Name"]);
   const companyName = asText(orderFields["Customer Company"]);
-  const address1 = must(orderFields["Shipping Address Line 1"], "Shipping Address Line 1");
+  const address1 = asText(orderFields["Shipping Address Line 1"]) || process.env.TEST_CUSTOMER_ADDRESS_1;
   const address2 = asText(orderFields["Shipping Address Line 2"]);
-  const city = must(orderFields["Shipping City"], "Shipping City");
-  const postalCode = must(orderFields["Shipping Postal Code"], "Shipping Postal Code");
-  const country = must(orderFields["Shipping Country Code"], "Shipping Country Code");
-  const email = asText(orderFields["Customer Email"]);
-  const phone = asText(orderFields["Customer Phone"]);
+  const city = asText(orderFields["Shipping City"]) || process.env.TEST_CUSTOMER_CITY;
+  const postalCode = asText(orderFields["Shipping Postal Code"]) || process.env.TEST_CUSTOMER_POSTAL_CODE;
+  const country = asText(orderFields["Shipping Country Code"]) || process.env.TEST_CUSTOMER_COUNTRY;
+  const email = asText(orderFields["Customer Email"]) || process.env.TEST_CUSTOMER_EMAIL;
+  const phone = asText(orderFields["Customer Phone"]) || process.env.TEST_CUSTOMER_PHONE;
 
   return {
     parcel: {
