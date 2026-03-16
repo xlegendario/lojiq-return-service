@@ -299,6 +299,7 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
 }
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
+
   const countryCode = customerAddress.country;
   const shippingOptionCode = await getReturnShippingOptionCode(countryCode);
 
@@ -324,20 +325,21 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   }
 
   const parcelId = body.parcel_id;
+  const sendcloudReturnId = body.return_id;
 
-  if (!parcelId) {
-    throw new Error(`Sendcloud return response missing parcel_id: ${JSON.stringify(body)}`);
+  if (!sendcloudReturnId) {
+    throw new Error(`Sendcloud return response missing return_id: ${JSON.stringify(body)}`);
   }
 
   let labelUrl = null;
 
-  // Poll Sendcloud until label is ready
+  // Poll return details until label exists
   for (let i = 0; i < 20; i++) {
 
     await new Promise(r => setTimeout(r, 1500));
 
-    const parcelRes = await fetch(
-      `https://panel.sendcloud.sc/api/v2/parcels/${parcelId}`,
+    const returnRes = await fetch(
+      `https://panel.sendcloud.sc/api/v3/returns/${sendcloudReturnId}`,
       {
         headers: {
           Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
@@ -345,9 +347,9 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
       }
     );
 
-    const parcelData = await parcelRes.json();
+    const returnData = await returnRes.json();
 
-    labelUrl = parcelData?.parcel?.label?.label_printer;
+    labelUrl = returnData?.label?.label_printer;
 
     if (labelUrl) {
       console.log("Sendcloud label ready:", labelUrl);
