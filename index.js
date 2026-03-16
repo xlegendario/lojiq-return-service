@@ -301,12 +301,13 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
   const shippingOptionCode = await getReturnShippingOptionCode(countryCode);
-  
+
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
     shippingOptionCode
   });
+
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
     headers: {
@@ -324,15 +325,45 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
 
   const parcelId = body.parcel_id;
 
-  const labelUrl = body?.documents?.label?.url || body?.label?.url;
-  
-  if (!labelUrl) {
-    throw new Error(`Sendcloud return response missing label URL: ${JSON.stringify(body)}`);
+  if (!parcelId) {
+    throw new Error(`Sendcloud return response missing parcel_id: ${JSON.stringify(body)}`);
   }
-  
+
+  let labelUrl = null;
+
+  // Poll Sendcloud until label is ready
+  for (let i = 0; i < 20; i++) {
+
+    await new Promise(r => setTimeout(r, 1500));
+
+    const parcelRes = await fetch(
+      `https://panel.sendcloud.sc/api/v2/parcels/${parcelId}`,
+      {
+        headers: {
+          Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+        }
+      }
+    );
+
+    const parcelData = await parcelRes.json();
+
+    labelUrl = parcelData?.parcel?.label?.label_printer;
+
+    if (labelUrl) {
+      console.log("Sendcloud label ready:", labelUrl);
+      break;
+    }
+
+    console.log("Waiting for Sendcloud label...");
+  }
+
+  if (!labelUrl) {
+    throw new Error("Sendcloud label generation timeout");
+  }
+
   return {
     parcelId: String(parcelId),
-    trackingNumber: body?.tracking_number || "",
+    trackingNumber: "",
     labelUrl
   };
 }
