@@ -2,8 +2,6 @@ import dotenv from "dotenv";
 import express from "express";
 import Airtable from "airtable";
 import QRCode from "qrcode";
-import puppeteer from "puppeteer";
-import { PDFDocument } from "pdf-lib";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 dotenv.config();
@@ -500,94 +498,14 @@ function buildPackingSlipHtml({
   </html>`;
 }
 
-async function htmlToPdfBuffer(html) {
-  const browser = await puppeteer.launch({
-    headless: "new",
-    executablePath: puppeteer.executablePath(),
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage"
-    ]
-  });
 
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    const pdf = await page.pdf({
-      format: "A4",
-      printBackground: true
-    });
-    return Buffer.from(pdf);
-  } finally {
-    await browser.close();
-  }
-}
 
-async function createPackingSlipPdf({ returnRecord, orderRecord, merchantRecord }) {
-  const returnFields = returnRecord.fields;
-  const orderFields = orderRecord.fields;
-  const merchantFields = merchantRecord?.fields || {};
 
-  const returnId = must(returnFields["Return ID"], "Return ID");
-  const merchantName = asText(returnFields["Store Name"]) || asText(merchantFields["Store Name"]) || "Store";
-  const merchantLogoUrl = getAttachmentUrl(merchantFields["Logo URL"]) || asText(merchantFields["Logo URL"]);
-  const brandColor = asText(merchantFields["Brand Color"]);
-  const shopifyOrderNumber = asText(returnFields["Shopify Order Number"]);
-  const productName = asText(returnFields["Product Name"]);
-  const sku = asText(returnFields["SKU"]);
-  const size = asText(returnFields["Size"]);
-  const scanUrl = `${APP_PUBLIC_BASE_URL.replace(/\/$/, "")}/scan/${encodeURIComponent(returnId)}`;
 
-  const qrCodeDataUrl = await QRCode.toDataURL(scanUrl, {
-    margin: 1,
-    width: 360
-  });
-
-  const html = buildPackingSlipHtml({
-    merchantName,
-    merchantLogoUrl,
-    brandColor,
-    returnId,
-    shopifyOrderNumber,
-    productName,
-    sku,
-    size,
-    qrCodeDataUrl
-  });
-
-  return htmlToPdfBuffer(html);
-}
-
-async function mergePdfBuffers(buffers) {
-  const merged = await PDFDocument.create();
-
-  for (const buffer of buffers) {
-    const pdf = await PDFDocument.load(buffer);
-    const copiedPages = await merged.copyPages(pdf, pdf.getPageIndices());
-    copiedPages.forEach((page) => merged.addPage(page));
-  }
-
-  return Buffer.from(await merged.save());
-}
 
 /* ---------------- R2 ---------------- */
 
-async function uploadReturnPackage({ returnId, pdfBuffer }) {
-  const safe = sanitizeFileName(`${returnId}.pdf`);
-  const key = `returns/${safe}`;
 
-  await r2.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: key,
-      Body: pdfBuffer,
-      ContentType: "application/pdf"
-    })
-  );
-
-  return `${R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${key}`;
-}
 
 /* ---------------- ROUTES ---------------- */
 
@@ -648,27 +566,8 @@ app.post("/create-return", async (req, res) => {
       customerAddress,
       returnId
     });
-
-    const labelPdfBuffer = await fetchBuffer(
-      sendcloud.labelUrl,
-      {
-        Authorization: buildBasicAuthHeader(
-          SENDCLOUD_PUBLIC_KEY,
-          SENDCLOUD_SECRET_KEY
-        )
-      }
-    );
-    const packingSlipBuffer = await createPackingSlipPdf({
-      returnRecord,
-      orderRecord,
-      merchantRecord
-    });
-
-    const mergedBuffer = await mergePdfBuffers([labelPdfBuffer, packingSlipBuffer]);
-    const returnPackageUrl = await uploadReturnPackage({
-      returnId,
-      pdfBuffer: mergedBuffer
-    });
+    
+    const returnPackageUrl = sendcloud.labelUrl;
 
     await updateReturnRecord(returnRecord.id, {
       "Tracking Number": sendcloud.trackingNumber,
