@@ -20,10 +20,10 @@ const {
   AIRTABLE_ORDERS_TABLE = "Unfulfilled Orders Log",
   AIRTABLE_RETURNS_TABLE = "Incoming Returns",
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
+  AIRTABLE_RETURN_METHODS_TABLE = "Return Shipping Methods",
   SENDCLOUD_PUBLIC_KEY,
   SENDCLOUD_SECRET_KEY,
-  SENDCLOUD_PARCELS_URL = "https://panel.sendcloud.sc/api/v2/parcels",
-  SENDCLOUD_SHIPPING_METHOD_ID,
+  SENDCLOUD_RETURNS_URL = "https://panel.sendcloud.sc/api/v3/returns",
   SENDCLOUD_FROM_NAME,
   SENDCLOUD_FROM_COMPANY,
   SENDCLOUD_FROM_ADDRESS_1,
@@ -45,7 +45,6 @@ const required = [
   "AIRTABLE_BASE_ID",
   "SENDCLOUD_PUBLIC_KEY",
   "SENDCLOUD_SECRET_KEY",
-  "SENDCLOUD_SHIPPING_METHOD_ID",
   "R2_ACCOUNT_ID",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
@@ -184,53 +183,90 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
+async function getReturnShippingOption(countryCode) {
+
+  const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
+    .select({
+      filterByFormula: `{Country Code} = '${countryCode}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  if (!records.length) {
+    throw new Error(`No return shipping method configured for country ${countryCode}`);
+  }
+
+  const optionCode = asText(records[0].fields["Sendcloud Option Code"]);
+
+  if (!optionCode) {
+    throw new Error(`Sendcloud Option Code missing for country ${countryCode}`);
+  }
+
+  return optionCode;
+}
+
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ orderFields, returnId }) {
-  // Adjust these field names to your exact Airtable schema.
+function mapOrderToSendcloudPayload({ orderFields, returnId, shippingOptionCode }) {
+
   const customerName = asText(orderFields["Customer Name"]) || process.env.TEST_CUSTOMER_NAME;
   const companyName = asText(orderFields["Customer Company"]);
+
   const address1 = asText(orderFields["Shipping Address Line 1"]) || process.env.TEST_CUSTOMER_ADDRESS_1;
-  const address2 = asText(orderFields["Shipping Address Line 2"]);
   const city = asText(orderFields["Shipping City"]) || process.env.TEST_CUSTOMER_CITY;
   const postalCode = asText(orderFields["Shipping Postal Code"]) || process.env.TEST_CUSTOMER_POSTAL_CODE;
   const country = asText(orderFields["Shipping Country Code"]) || process.env.TEST_CUSTOMER_COUNTRY;
+
   const email = asText(orderFields["Customer Email"]) || process.env.TEST_CUSTOMER_EMAIL;
   const phone = asText(orderFields["Customer Phone"]) || process.env.TEST_CUSTOMER_PHONE;
 
   return {
-    parcel: {
+
+    from_address: {
       name: customerName || companyName || "Customer",
-      company_name: companyName || undefined,
-      address: address1,
-      address_2: address2 || undefined,
-      city,
+      address_line_1: address1,
       postal_code: postalCode,
-      country,
+      city,
+      country_code: country,
       email: email || undefined,
-      telephone: phone || undefined,
-      sender_address: 1,
-      external_reference: returnId,
-      request_label: true,
-      shipment: {
-        id: Number(SENDCLOUD_SHIPPING_METHOD_ID)
-      },
-      from_name: SENDCLOUD_FROM_NAME || undefined,
-      from_company_name: SENDCLOUD_FROM_COMPANY || undefined,
-      from_address_1: SENDCLOUD_FROM_ADDRESS_1 || undefined,
-      from_city: SENDCLOUD_FROM_CITY || undefined,
-      from_postal_code: SENDCLOUD_FROM_POSTAL_CODE || undefined,
-      from_country: SENDCLOUD_FROM_COUNTRY || undefined,
-      from_email: SENDCLOUD_FROM_EMAIL || undefined,
-      from_telephone: SENDCLOUD_FROM_PHONE || undefined
-    }
+      phone_number: phone || undefined
+    },
+
+    to_address: {
+      name: SENDCLOUD_FROM_NAME,
+      company_name: SENDCLOUD_FROM_COMPANY,
+      address_line_1: SENDCLOUD_FROM_ADDRESS_1,
+      postal_code: SENDCLOUD_FROM_POSTAL_CODE,
+      city: SENDCLOUD_FROM_CITY,
+      country_code: SENDCLOUD_FROM_COUNTRY,
+      email: SENDCLOUD_FROM_EMAIL,
+      phone_number: SENDCLOUD_FROM_PHONE
+    },
+
+    ship_with: {
+      type: "shipping_option_code",
+      shipping_option_code: shippingOptionCode
+    },
+
+    weight: {
+      value: 0.5,
+      unit: "kg"
+    },
+
+    external_reference: returnId
   };
 }
 
 async function createSendcloudReturnLabel({ orderFields, returnId }) {
-  const payload = mapOrderToSendcloudPayload({ orderFields, returnId });
+  const countryCode = asText(orderFields["Shipping Country Code"]);
+  const shippingOptionCode = await getReturnShippingOption(countryCode);
+  const payload = mapOrderToSendcloudPayload({
+    orderFields,
+    returnId,
+    shippingOptionCode
+  });
 
-  const res = await fetch(SENDCLOUD_PARCELS_URL, {
+  const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
     headers: {
       Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY),
@@ -242,28 +278,38 @@ async function createSendcloudReturnLabel({ orderFields, returnId }) {
   const body = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(`Sendcloud create parcel failed: ${res.status} ${JSON.stringify(body)}`);
+    throw new Error(`Sendcloud create return failed: ${res.status} ${JSON.stringify(body)}`);
   }
 
-  const parcel = body.parcel || body.parcels?.[0];
-  if (!parcel) {
-    throw new Error(`Sendcloud response missing parcel: ${JSON.stringify(body)}`);
+  const parcelId = body.parcel_id;
+
+  if (!parcelId) {
+    throw new Error(`Sendcloud return response missing parcel_id: ${JSON.stringify(body)}`);
   }
 
-  const labelUrl =
-    parcel.label?.normal ||
-    parcel.label?.label_printer ||
-    parcel.label?.label ||
-    parcel.label_url ||
-    "";
+  // Wait briefly for label generation
+  await new Promise(r => setTimeout(r, 1500));
+
+  const labelRes = await fetch(
+    `https://panel.sendcloud.sc/api/v3/parcel-documents?parcel_id=${parcelId}&type=label`,
+    {
+      headers: {
+        Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+      }
+    }
+  );
+
+  const labelData = await labelRes.json();
+
+  const labelUrl = labelData?.documents?.[0]?.url;
 
   if (!labelUrl) {
-    throw new Error(`Sendcloud response missing label URL: ${JSON.stringify(parcel)}`);
+    throw new Error(`Sendcloud label URL not found`);
   }
 
   return {
-    parcelId: String(parcel.id || ""),
-    trackingNumber: asText(parcel.tracking_number),
+    parcelId: String(parcelId),
+    trackingNumber: "",
     labelUrl
   };
 }
