@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import express from "express";
 import Airtable from "airtable";
+import QRCode from "qrcode";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
@@ -167,6 +168,17 @@ async function createPackingSlipPdf({
 
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([595, 842]);
+  
+  const scanUrl = `${APP_PUBLIC_BASE_URL}/scan/${returnId}`;
+  
+  const qrDataUrl = await QRCode.toDataURL(scanUrl);
+  
+  const qrImageBytes = Buffer.from(
+    qrDataUrl.replace(/^data:image\/png;base64,/, ""),
+    "base64"
+  );
+  
+  const qrImage = await pdf.embedPng(qrImageBytes);
 
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -200,6 +212,13 @@ async function createPackingSlipPdf({
 
     y -= 28;
   }
+
+  page.drawImage(qrImage, {
+    x: 420,
+    y: 600,
+    width: 120,
+    height: 120
+  });
 
   return Buffer.from(await pdf.save());
 }
