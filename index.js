@@ -224,7 +224,7 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
-async function getReturnShippingProductCode(countryCode) {
+async function getReturnShippingOptionCode(countryCode) {
 
   const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
     .select({
@@ -300,7 +300,7 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProduct
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingProductCode = await getReturnShippingProductCode(countryCode);
+  const shippingProductCode = await getReturnShippingOptionCode(countryCode);
 
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
