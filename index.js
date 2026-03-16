@@ -117,6 +117,47 @@ async function fetchBuffer(url, headers = {}) {
   return Buffer.from(await res.arrayBuffer());
 }
 
+async function getShopifyOrder({ shopDomain, accessToken, orderId }) {
+
+  const url = `https://${shopDomain}/admin/api/2024-01/orders/${orderId}.json`;
+
+  const res = await fetch(url, {
+    headers: {
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify order fetch failed: ${res.status} ${text}`);
+  }
+
+  const data = await res.json();
+
+  return data.order;
+}
+
+function extractCustomerAddress(shopifyOrder) {
+
+  const addr = shopifyOrder.shipping_address;
+
+  if (!addr) {
+    throw new Error("Shopify order missing shipping address");
+  }
+
+  return {
+    name: `${addr.first_name || ""} ${addr.last_name || ""}`.trim(),
+    company: addr.company || "",
+    address1: addr.address1,
+    city: addr.city,
+    postalCode: addr.zip,
+    country: addr.country_code,
+    email: shopifyOrder.email,
+    phone: addr.phone
+  };
+}
+
 /* ---------------- AIRTABLE ---------------- */
 
 async function getOrderRecord(orderRecordId) {
@@ -207,23 +248,24 @@ async function getReturnShippingOption(countryCode) {
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ orderFields, returnId, shippingOptionCode }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
 
-  const customerName = asText(orderFields["Customer Name"]) || process.env.TEST_CUSTOMER_NAME;
-  const companyName = asText(orderFields["Customer Company"]);
-
-  const address1 = asText(orderFields["Shipping Address Line 1"]) || process.env.TEST_CUSTOMER_ADDRESS_1;
-  const city = asText(orderFields["Shipping City"]) || process.env.TEST_CUSTOMER_CITY;
-  const postalCode = asText(orderFields["Shipping Postal Code"]) || process.env.TEST_CUSTOMER_POSTAL_CODE;
-  const country = asText(orderFields["Shipping Country Code"]) || process.env.TEST_CUSTOMER_COUNTRY;
-
-  const email = asText(orderFields["Customer Email"]) || process.env.TEST_CUSTOMER_EMAIL;
-  const phone = asText(orderFields["Customer Phone"]) || process.env.TEST_CUSTOMER_PHONE;
+  const {
+    name,
+    company,
+    address1,
+    city,
+    postalCode,
+    country,
+    email,
+    phone
+  } = customerAddress;
 
   return {
 
     from_address: {
-      name: customerName || companyName || "Customer",
+      name,
+      company_name: company || undefined,
       address_line_1: address1,
       postal_code: postalCode,
       city,
@@ -257,11 +299,11 @@ function mapOrderToSendcloudPayload({ orderFields, returnId, shippingOptionCode 
   };
 }
 
-async function createSendcloudReturnLabel({ orderFields, returnId }) {
-  const countryCode = asText(orderFields["Shipping Country Code"]).toUpperCase();
+async function createSendcloudReturnLabel({ customerAddress, returnId }) {
+  const countryCode = customerAddress.country;
   const shippingOptionCode = await getReturnShippingOption(countryCode);
   const payload = mapOrderToSendcloudPayload({
-    orderFields,
+    customerAddress,
     returnId,
     shippingOptionCode
   });
@@ -561,6 +603,31 @@ app.post("/create-return", async (req, res) => {
     }
 
     const orderRecord = await getOrderRecord(orderRecordId);
+    const clientRecord = first(orderRecord.fields["Client"]);
+
+    if (!clientRecord) {
+      throw new Error("Client not linked on order record");
+    }
+    
+    const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientRecord);
+    const merchantFields = merchantRecord.fields;
+
+    const shopDomain = asText(merchantFields["Shopify Store URL"])
+      .replace("https://", "")
+      .replace("/", "");
+    
+    const accessToken = asText(merchantFields["Shopify Token"]);
+    const shopifyOrderId = asText(orderRecord.fields["Shopify Order ID"]);
+
+    if (!shopifyOrderId) {
+      throw new Error("Shopify Order ID missing in Airtable order");
+    }
+    const shopifyOrder = await getShopifyOrder({
+      shopDomain,
+      accessToken,
+      orderId: shopifyOrderId
+    });
+    const customerAddress = extractCustomerAddress(shopifyOrder);
     const createdReturn = await createIncomingReturn(orderRecordId);
 
     // Re-fetch so Airtable formula fields like Return ID are available.
@@ -568,11 +635,8 @@ app.post("/create-return", async (req, res) => {
     const returnFields = returnRecord.fields;
     const returnId = must(returnFields["Return ID"], "Return ID");
 
-    const clientId = asText(first(orderRecord.fields["Client ID"])) || asText(orderRecord.fields["Client ID"]);
-    const merchantRecord = clientId ? await getMerchantByClientId(clientId) : null;
-
     const sendcloud = await createSendcloudReturnLabel({
-      orderFields: orderRecord.fields,
+      customerAddress,
       returnId
     });
 
