@@ -286,7 +286,10 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProduct
 
     ship_with: {
       type: "shipping_product_code",
-      shipping_product_code: shippingProductCode
+      shipping_product_code: shippingProductCode,
+      functionalities: {
+        labelless: false
+      }
     },
 
     weight: {
