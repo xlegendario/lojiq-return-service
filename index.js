@@ -288,7 +288,9 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProduct
       type: "shipping_product_code",
       shipping_product_code: shippingProductCode,
       functionalities: {
-        labelless: false
+        labelless: false,
+        pickup_return: false,
+        pick_up: false
       }
     },
 
