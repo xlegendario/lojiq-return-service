@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import express from "express";
 import Airtable from "airtable";
-import QRCode from "qrcode";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 dotenv.config();
@@ -154,6 +154,85 @@ function extractCustomerAddress(shopifyOrder) {
     email: shopifyOrder.email,
     phone: addr.phone
   };
+}
+
+async function createPackingSlipPdf({
+  merchantName,
+  returnId,
+  orderNumber,
+  productName,
+  sku,
+  size
+}) {
+
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595, 842]);
+
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  let y = 780;
+
+  page.drawText(`${merchantName} Return Slip`, {
+    x: 50,
+    y,
+    size: 22,
+    font: bold
+  });
+
+  y -= 60;
+
+  const fields = [
+    ["Return ID", returnId],
+    ["Order", orderNumber],
+    ["Product", productName],
+    ["SKU", sku],
+    ["Size", size]
+  ];
+
+  for (const [label, value] of fields) {
+    page.drawText(`${label}: ${value || "-"}`, {
+      x: 50,
+      y,
+      size: 14,
+      font
+    });
+
+    y -= 28;
+  }
+
+  return Buffer.from(await pdf.save());
+}
+
+async function mergePdfBuffers(buffers) {
+
+  const merged = await PDFDocument.create();
+
+  for (const buffer of buffers) {
+
+    const pdf = await PDFDocument.load(buffer);
+    const pages = await merged.copyPages(pdf, pdf.getPageIndices());
+
+    pages.forEach(p => merged.addPage(p));
+  }
+
+  return Buffer.from(await merged.save());
+}
+
+async function uploadReturnPackage({ returnId, pdfBuffer }) {
+
+  const key = `returns/${sanitizeFileName(returnId)}.pdf`;
+
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      Body: pdfBuffer,
+      ContentType: "application/pdf"
+    })
+  );
+
+  return `${R2_PUBLIC_BASE_URL}/${key}`;
 }
 
 /* ---------------- AIRTABLE ---------------- */
@@ -321,7 +400,7 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   if (!res.ok) {
     throw new Error(`Sendcloud create return failed: ${res.status} ${JSON.stringify(body)}`);
   }
-
+  
   const parcelId = body.parcel_id;
   const sendcloudReturnId = body.return_id;
 
@@ -369,139 +448,6 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
 }
 
 /* ---------------- PDF GENERATION ---------------- */
-
-function buildPackingSlipHtml({
-  merchantName,
-  merchantLogoUrl,
-  brandColor,
-  returnId,
-  shopifyOrderNumber,
-  productName,
-  sku,
-  size,
-  qrCodeDataUrl
-}) {
-  const color = brandColor || "#111111";
-
-  return `
-  <!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <style>
-        body {
-          font-family: Arial, Helvetica, sans-serif;
-          padding: 32px;
-          color: #111;
-          font-size: 14px;
-        }
-        .header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          border-bottom: 3px solid ${color};
-          padding-bottom: 16px;
-          margin-bottom: 24px;
-        }
-        .logo {
-          max-height: 56px;
-          max-width: 220px;
-          object-fit: contain;
-        }
-        .title {
-          font-size: 24px;
-          font-weight: 700;
-          color: ${color};
-        }
-        .box {
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          padding: 18px;
-          margin-bottom: 20px;
-        }
-        .label {
-          color: #666;
-          font-size: 12px;
-          margin-bottom: 4px;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-        .value {
-          font-size: 16px;
-          font-weight: 600;
-          margin-bottom: 14px;
-        }
-        .grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 16px;
-        }
-        .qr {
-          text-align: center;
-          margin-top: 20px;
-        }
-        .qr img {
-          width: 180px;
-          height: 180px;
-        }
-        .footer {
-          margin-top: 24px;
-          font-size: 12px;
-          color: #666;
-          text-align: center;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <div>
-          ${merchantLogoUrl ? `<img class="logo" src="${merchantLogoUrl}" />` : `<div class="title">${merchantName}</div>`}
-        </div>
-        <div class="title">Return Packing Slip</div>
-      </div>
-
-      <div class="box">
-        <div class="grid">
-          <div>
-            <div class="label">Return ID</div>
-            <div class="value">${returnId}</div>
-          </div>
-          <div>
-            <div class="label">Shopify Order</div>
-            <div class="value">#${shopifyOrderNumber}</div>
-          </div>
-          <div>
-            <div class="label">Product</div>
-            <div class="value">${productName}</div>
-          </div>
-          <div>
-            <div class="label">SKU</div>
-            <div class="value">${sku}</div>
-          </div>
-          <div>
-            <div class="label">Size</div>
-            <div class="value">${size}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="qr">
-        <img src="${qrCodeDataUrl}" />
-        <div style="margin-top: 8px; font-weight: 700;">${returnId}</div>
-      </div>
-
-      <div class="footer">
-        Please place this packing slip inside the parcel.<br />
-        Processed via Lojiq Returns.
-      </div>
-    </body>
-  </html>`;
-}
-
-
-
-
-
 
 /* ---------------- R2 ---------------- */
 
@@ -567,7 +513,38 @@ app.post("/create-return", async (req, res) => {
       returnId
     });
     
-    const returnPackageUrl = sendcloud.labelUrl;
+    // download label
+    const labelPdf = await fetchBuffer(
+      sendcloud.labelUrl,
+      {
+        Authorization: buildBasicAuthHeader(
+          SENDCLOUD_PUBLIC_KEY,
+          SENDCLOUD_SECRET_KEY
+        )
+      }
+    );
+    
+    // create packing slip
+    const packingSlipPdf = await createPackingSlipPdf({
+      merchantName: merchantFields["Store Name"],
+      returnId,
+      orderNumber: returnFields["Shopify Order Number"],
+      productName: returnFields["Product Name"],
+      sku: returnFields["SKU"],
+      size: returnFields["Size"]
+    });
+    
+    // merge PDFs
+    const mergedPdf = await mergePdfBuffers([
+      labelPdf,
+      packingSlipPdf
+    ]);
+    
+    // upload to R2
+    const returnPackageUrl = await uploadReturnPackage({
+      returnId,
+      pdfBuffer: mergedPdf
+    });
 
     await updateReturnRecord(returnRecord.id, {
       "Tracking Number": sendcloud.trackingNumber,
