@@ -324,49 +324,15 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
 
   const parcelId = body.parcel_id;
 
-  if (!parcelId) {
-    throw new Error(`Sendcloud return response missing parcel_id: ${JSON.stringify(body)}`);
-  }
-
-  // Wait for Sendcloud label generation
-  let labelUrl = null;
-  
-  for (let i = 0; i < 20; i++) {
-  
-    await new Promise(r => setTimeout(r, 1500));
-  
-    const labelRes = await fetch(
-      `https://panel.sendcloud.sc/api/v3/parcel-documents?parcel_id=${parcelId}&type=label`,
-      {
-        headers: {
-          Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
-        }
-      }
-    );
-  
-    const labelData = await labelRes.json();
-  
-    labelUrl = labelData?.documents?.[0]?.url;
-  
-    if (labelUrl) {
-      console.log("Sendcloud label ready:", labelUrl);
-      break;
-    }
-  
-    console.log("Waiting for Sendcloud label...");
-  }
+  const labelUrl = body?.documents?.label?.url || body?.label?.url;
   
   if (!labelUrl) {
-    throw new Error("Sendcloud label generation timeout");
+    throw new Error(`Sendcloud return response missing label URL: ${JSON.stringify(body)}`);
   }
-
-  if (!labelUrl) {
-    throw new Error(`Sendcloud label URL not found`);
-  }
-
+  
   return {
     parcelId: String(parcelId),
-    trackingNumber: "",
+    trackingNumber: body?.tracking_number || "",
     labelUrl
   };
 }
