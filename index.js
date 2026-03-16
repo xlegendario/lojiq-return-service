@@ -262,7 +262,6 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
   } = customerAddress;
 
   return {
-
     from_address: {
       name,
       company_name: company || undefined,
@@ -287,7 +286,7 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
 
     ship_with: {
       type: "shipping_option_code",
-      shipping_option_code: `${carrier}:return`
+      shipping_option_code: shippingOptionCode
     },
 
     weight: {
@@ -305,9 +304,8 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    carrier
+    shippingOptionCode
   });
-
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
     headers: {
