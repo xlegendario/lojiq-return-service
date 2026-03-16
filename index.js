@@ -224,7 +224,7 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
-async function getReturnShippingMethodId(countryCode) {
+async function getReturnShippingOption(countryCode) {
 
   const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
     .select({
@@ -234,21 +234,21 @@ async function getReturnShippingMethodId(countryCode) {
     .firstPage();
 
   if (!records.length) {
-    throw new Error(`No return shipping method configured for country ${countryCode}`);
+    throw new Error(`No return shipping option configured for country ${countryCode}`);
   }
 
-  const methodId = records[0].fields["Shipping Method ID"];
+  const option = records[0].fields["Shipping Option Code"];
 
-  if (!methodId) {
-    throw new Error(`Shipping Method ID missing for country ${countryCode}`);
+  if (!option) {
+    throw new Error(`Shipping Option Code missing for country ${countryCode}`);
   }
 
-  return Number(methodId);
+  return option;
 }
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingMethodId }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
 
   const {
     name,
@@ -285,8 +285,8 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingMethodI
     },
 
     ship_with: {
-      type: "shipping_method",
-      id: shippingMethodId
+      type: "shipping_option_code",
+      shipping_option_code: shippingOptionCode
     },
 
     weight: {
@@ -300,12 +300,12 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingMethodI
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingMethodId = await getReturnShippingMethodId(countryCode);
+  const shippingOptionCode = await getReturnShippingOption(countryCode);
 
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    shippingMethodId
+    shippingOptionCode
   });
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
