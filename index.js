@@ -275,19 +275,19 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, carrier }) {
     },
 
     to_address: {
-      name: SENDCLOUD_TO_NAME,
-      company_name: SENDCLOUD_TO_COMPANY || undefined,
-      address_line_1: SENDCLOUD_TO_ADDRESS_1,
-      postal_code: SENDCLOUD_TO_POSTAL_CODE,
-      city: SENDCLOUD_TO_CITY,
-      country_code: SENDCLOUD_TO_COUNTRY,
-      email: SENDCLOUD_TO_EMAIL || undefined,
-      phone_number: SENDCLOUD_TO_PHONE || undefined
+      name: SENDCLOUD_FROM_NAME,
+      company_name: SENDCLOUD_FROM_COMPANY || undefined,
+      address_line_1: SENDCLOUD_FROM_ADDRESS_1,
+      postal_code: SENDCLOUD_FROM_POSTAL_CODE,
+      city: SENDCLOUD_FROM_CITY,
+      country_code: SENDCLOUD_FROM_COUNTRY,
+      email: SENDCLOUD_FROM_EMAIL || undefined,
+      phone_number: SENDCLOUD_FROM_PHONE || undefined
     },
 
     ship_with: {
-      type: "carrier",
-      carrier_code: carrier
+      type: "shipping_option_code",
+      shipping_option_code: `${carrier}:return`
     },
 
     weight: {
