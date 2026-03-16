@@ -237,18 +237,18 @@ async function getReturnShippingOption(countryCode) {
     throw new Error(`No return shipping option configured for country ${countryCode}`);
   }
 
-  const option = asText(records[0].fields["Shipping Option Code"]);
+  const methodId = records[0].fields["Shipping Method ID"];
 
-  if (!option) {
-    throw new Error(`Shipping Option Code missing for country ${countryCode}`);
+  if (!methodId) {
+    throw new Error(`Shipping Method ID missing for country ${countryCode}`);
   }
 
-  return option;
+  return Number(methodId);
 }
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingMethodId }) {
 
   const {
     name,
@@ -285,8 +285,8 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
     },
 
     ship_with: {
-      type: "shipping_option_code",
-      shipping_option_code: shippingOptionCode
+      type: "shipping_method",
+      id: shippingMethodId
     },
 
     weight: {
@@ -300,11 +300,12 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingOptionCode = await getReturnShippingOption(countryCode);
+  const shippingMethodId = await getReturnShippingOption(countryCode);
+
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    shippingOptionCode
+    shippingMethodId
   });
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
