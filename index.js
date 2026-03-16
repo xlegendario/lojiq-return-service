@@ -224,7 +224,7 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
-async function getReturnShippingOption(countryCode) {
+async function getReturnCarrier(countryCode) {
 
   const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
     .select({
@@ -234,21 +234,21 @@ async function getReturnShippingOption(countryCode) {
     .firstPage();
 
   if (!records.length) {
-    throw new Error(`No return shipping method configured for country ${countryCode}`);
+    throw new Error(`No return carrier configured for country ${countryCode}`);
   }
 
-  const optionCode = asText(records[0].fields["Sendcloud Option Code"]);
+  const carrier = asText(records[0].fields["Carrier"]);
 
-  if (!optionCode) {
-    throw new Error(`Sendcloud Option Code missing for country ${countryCode}`);
+  if (!carrier) {
+    throw new Error(`Carrier missing for country ${countryCode}`);
   }
 
-  return optionCode;
+  return carrier;
 }
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, carrier }) {
 
   const {
     name,
@@ -285,15 +285,9 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
       phone_number: SENDCLOUD_FROM_PHONE
     },
 
-    ship_with: {
-      type: "shipping_option_code",
-      shipping_option_code: shippingOptionCode
-    },
+    delivery_option: "drop_off_point",
 
-    weight: {
-      value: 0.5,
-      unit: "kg"
-    },
+    selected_carrier_code: carrier,
 
     external_reference: returnId
   };
@@ -301,11 +295,11 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingOptionCode = await getReturnShippingOption(countryCode);
+  const carrier = await getReturnCarrier(countryCode);
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    shippingOptionCode
+    carrier
   });
 
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
@@ -613,8 +607,8 @@ app.post("/create-return", async (req, res) => {
     const merchantFields = merchantRecord.fields;
 
     const shopDomain = asText(merchantFields["Shopify Store URL"])
-      .replace("https://", "")
-      .replace("/", "");
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
     
     const accessToken = asText(merchantFields["Shopify Token"]);
     const shopifyOrderId = asText(orderRecord.fields["Shopify Order ID"]);
