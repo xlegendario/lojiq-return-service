@@ -248,7 +248,7 @@ async function getReturnShippingOptionCode(countryCode) {
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProductCode }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
 
   const {
     name,
@@ -286,7 +286,7 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProduct
 
     ship_with: {
       type: "shipping_option_code",
-      shipping_option_code: shippingProductCode
+      shipping_option_code: shippingOptionCode
     },
 
     weight: {
@@ -300,12 +300,12 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProduct
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingProductCode = await getReturnShippingOptionCode(countryCode);
-
+  const shippingOptionCode = await getReturnShippingOptionCode(countryCode);
+  
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    shippingProductCode
+    shippingOptionCode
   });
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
@@ -328,11 +328,12 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
     throw new Error(`Sendcloud return response missing parcel_id: ${JSON.stringify(body)}`);
   }
 
-  // Wait briefly for label generation
+  // Wait for Sendcloud label generation
   let labelUrl = null;
   
-  for (let i = 0; i < 6; i++) {
-    await new Promise(r => setTimeout(r, 1000));
+  for (let i = 0; i < 20; i++) {
+  
+    await new Promise(r => setTimeout(r, 1500));
   
     const labelRes = await fetch(
       `https://panel.sendcloud.sc/api/v3/parcel-documents?parcel_id=${parcelId}&type=label`,
@@ -347,7 +348,12 @@ async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   
     labelUrl = labelData?.documents?.[0]?.url;
   
-    if (labelUrl) break;
+    if (labelUrl) {
+      console.log("Sendcloud label ready:", labelUrl);
+      break;
+    }
+  
+    console.log("Waiting for Sendcloud label...");
   }
   
   if (!labelUrl) {
