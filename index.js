@@ -644,7 +644,15 @@ app.post("/create-return", async (req, res) => {
       returnId
     });
 
-    const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl);
+    const labelPdfBuffer = await fetchBuffer(
+      sendcloud.labelUrl,
+      {
+        Authorization: buildBasicAuthHeader(
+          SENDCLOUD_PUBLIC_KEY,
+          SENDCLOUD_SECRET_KEY
+        )
+      }
+    );
     const packingSlipBuffer = await createPackingSlipPdf({
       returnRecord,
       orderRecord,
