@@ -502,8 +502,8 @@ function buildPackingSlipHtml({
 
 async function htmlToPdfBuffer(html) {
   const browser = await puppeteer.launch({
-    executablePath: "/usr/bin/chromium-browser",
-    headless: true,
+    headless: "new",
+    executablePath: puppeteer.executablePath(),
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
