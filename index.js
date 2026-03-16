@@ -224,7 +224,7 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
-async function getReturnCarrier(countryCode) {
+async function getReturnShippingOption(countryCode) {
 
   const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
     .select({
@@ -234,21 +234,21 @@ async function getReturnCarrier(countryCode) {
     .firstPage();
 
   if (!records.length) {
-    throw new Error(`No return carrier configured for country ${countryCode}`);
+    throw new Error(`No return shipping option configured for country ${countryCode}`);
   }
 
-  const carrier = asText(records[0].fields["Carrier"]);
+  const option = asText(records[0].fields["Shipping Option Code"]);
 
-  if (!carrier) {
-    throw new Error(`Carrier missing for country ${countryCode}`);
+  if (!option) {
+    throw new Error(`Shipping Option Code missing for country ${countryCode}`);
   }
 
-  return carrier;
+  return option;
 }
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, carrier }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
 
   const {
     name,
@@ -301,7 +301,7 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, carrier }) {
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const carrier = await getReturnCarrier(countryCode);
+  const shippingOptionCode = await getReturnShippingOption(countryCode);
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
