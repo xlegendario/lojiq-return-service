@@ -276,18 +276,24 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, carrier }) {
 
     to_address: {
       name: SENDCLOUD_FROM_NAME,
-      company_name: SENDCLOUD_FROM_COMPANY,
+      company_name: SENDCLOUD_FROM_COMPANY || undefined,
       address_line_1: SENDCLOUD_FROM_ADDRESS_1,
       postal_code: SENDCLOUD_FROM_POSTAL_CODE,
       city: SENDCLOUD_FROM_CITY,
       country_code: SENDCLOUD_FROM_COUNTRY,
-      email: SENDCLOUD_FROM_EMAIL,
-      phone_number: SENDCLOUD_FROM_PHONE
+      email: SENDCLOUD_FROM_EMAIL || undefined,
+      phone_number: SENDCLOUD_FROM_PHONE || undefined
     },
 
-    delivery_option: "drop_off_point",
+    ship_with: {
+      type: "carrier",
+      carrier_code: carrier
+    },
 
-    selected_carrier_code: carrier,
+    weight: {
+      value: 0.5,
+      unit: "kg"
+    },
 
     external_reference: returnId
   };
