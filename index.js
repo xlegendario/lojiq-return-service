@@ -569,7 +569,7 @@ app.post("/create-return", async (req, res) => {
       "Tracking Number": sendcloud.trackingNumber,
       "Sendcloud Parcel ID": sendcloud.parcelId,
       "Return Label URL": sendcloud.labelUrl,
-      "Return Package URL": returnPackageUrl,
+      "Packing Slip URL": returnPackageUrl,
       "Return Status": "Label Generated"
     });
 
