@@ -288,20 +288,30 @@ async function createSendcloudReturnLabel({ orderFields, returnId }) {
   }
 
   // Wait briefly for label generation
-  await new Promise(r => setTimeout(r, 1500));
-
-  const labelRes = await fetch(
-    `https://panel.sendcloud.sc/api/v3/parcel-documents?parcel_id=${parcelId}&type=label`,
-    {
-      headers: {
-        Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+  let labelUrl = null;
+  
+  for (let i = 0; i < 6; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+  
+    const labelRes = await fetch(
+      `https://panel.sendcloud.sc/api/v3/parcel-documents?parcel_id=${parcelId}&type=label`,
+      {
+        headers: {
+          Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+        }
       }
-    }
-  );
-
-  const labelData = await labelRes.json();
-
-  const labelUrl = labelData?.documents?.[0]?.url;
+    );
+  
+    const labelData = await labelRes.json();
+  
+    labelUrl = labelData?.documents?.[0]?.url;
+  
+    if (labelUrl) break;
+  }
+  
+  if (!labelUrl) {
+    throw new Error("Sendcloud label generation timeout");
+  }
 
   if (!labelUrl) {
     throw new Error(`Sendcloud label URL not found`);
