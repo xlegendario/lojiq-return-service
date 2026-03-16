@@ -224,7 +224,7 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
-async function getReturnShippingOption(countryCode) {
+async function getReturnShippingProductCode(countryCode) {
 
   const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
     .select({
@@ -248,7 +248,7 @@ async function getReturnShippingOption(countryCode) {
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
+function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingProductCode }) {
 
   const {
     name,
@@ -285,8 +285,8 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
     },
 
     ship_with: {
-      type: "shipping_option_code",
-      shipping_option_code: shippingOptionCode
+      type: "shipping_product_code",
+      shipping_product_code: shippingProductCode
     },
 
     weight: {
@@ -300,12 +300,12 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingOptionCode = await getReturnShippingOption(countryCode);
+  const shippingProductCode = await getReturnShippingProductCode(countryCode);
 
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    shippingOptionCode
+    shippingProductCode
   });
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
     method: "POST",
