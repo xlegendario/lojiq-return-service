@@ -224,7 +224,7 @@ async function updateReturnRecord(returnRecordId, fields) {
   ]);
 }
 
-async function getReturnShippingOption(countryCode) {
+async function getReturnShippingMethodId(countryCode) {
 
   const records = await airtable(AIRTABLE_RETURN_METHODS_TABLE)
     .select({
@@ -234,7 +234,7 @@ async function getReturnShippingOption(countryCode) {
     .firstPage();
 
   if (!records.length) {
-    throw new Error(`No return shipping option configured for country ${countryCode}`);
+    throw new Error(`No return shipping method configured for country ${countryCode}`);
   }
 
   const methodId = records[0].fields["Shipping Method ID"];
@@ -300,7 +300,7 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingMethodI
 
 async function createSendcloudReturnLabel({ customerAddress, returnId }) {
   const countryCode = customerAddress.country;
-  const shippingMethodId = await getReturnShippingOption(countryCode);
+  const shippingMethodId = await getReturnShippingMethodId(countryCode);
 
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
