@@ -258,7 +258,7 @@ function mapOrderToSendcloudPayload({ orderFields, returnId, shippingOptionCode 
 }
 
 async function createSendcloudReturnLabel({ orderFields, returnId }) {
-  const countryCode = asText(orderFields["Shipping Country Code"]);
+  const countryCode = asText(orderFields["Shipping Country Code"]).toUpperCase();
   const shippingOptionCode = await getReturnShippingOption(countryCode);
   const payload = mapOrderToSendcloudPayload({
     orderFields,
