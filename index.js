@@ -107,6 +107,16 @@ function getAttachmentUrl(fieldValue) {
   return fieldValue[0].url;
 }
 
+function getBrandColor(value) {
+  const v = asText(value).toLowerCase();
+
+  if (!v || v === "null" || v === "undefined") {
+    return "#111111";
+  }
+
+  return v.startsWith("#") ? v : `#${v}`;
+}
+
 async function fetchImageBytes(url) {
   const res = await fetch(url);
   if (!res.ok) {
@@ -180,7 +190,48 @@ function rgbFromHex(hex) {
   return rgb(r, g, b); // ✅ THIS is the fix
 }
 
-function drawLabelValue(page, label, value, x, y, font, bold, labelColor, valueColor) {
+function drawWrappedText(page, text, x, y, maxWidth, font, size, color, lineHeight = 15, maxLines = 3) {
+  const words = String(text || "-").split(/\s+/);
+  const lines = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const testWidth = font.widthOfTextAtSize(testLine, size);
+
+    if (testWidth <= maxWidth) {
+      currentLine = testLine;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+
+  if (currentLine) lines.push(currentLine);
+
+  const finalLines = lines.slice(0, maxLines);
+
+  finalLines.forEach((line, index) => {
+    page.drawText(line, {
+      x,
+      y: y - index * lineHeight,
+      size,
+      font,
+      color
+    });
+  });
+
+  return finalLines.length;
+}
+
+function drawLabelValue(page, label, value, x, y, font, bold, labelColor, valueColor, options = {}) {
+  const {
+    maxWidth = 200,
+    maxLines = 1,
+    valueSize = 13,
+    lineHeight = 15
+  } = options;
+
   page.drawText(label, {
     x,
     y,
@@ -189,12 +240,42 @@ function drawLabelValue(page, label, value, x, y, font, bold, labelColor, valueC
     color: labelColor
   });
 
-  page.drawText(String(value || "-"), {
+  const linesUsed = drawWrappedText(
+    page,
+    String(value || "-"),
     x,
-    y: y - 16,
-    size: 13,
-    font: bold,
-    color: valueColor
+    y - 16,
+    maxWidth,
+    bold,
+    valueSize,
+    valueColor,
+    lineHeight,
+    maxLines
+  );
+
+  return linesUsed;
+}
+
+function drawCheckboxList(page, items, x, y, font, textColor, lineHeight = 18) {
+  items.forEach((item, index) => {
+    const yy = y - index * lineHeight;
+
+    page.drawRectangle({
+      x,
+      y: yy - 8,
+      width: 10,
+      height: 10,
+      borderWidth: 1,
+      borderColor: textColor
+    });
+
+    page.drawText(item, {
+      x: x + 18,
+      y: yy - 7,
+      size: 10.5,
+      font,
+      color: textColor
+    });
   });
 }
 
@@ -290,10 +371,14 @@ async function createPackingSlipPdf({
     });
   }
 
-  page.drawText("Return Packing Slip", {
-    x: width - 210,
+  const title = "Return Packing Slip";
+  const titleSize = 22;
+  const titleWidth = bold.widthOfTextAtSize(title, titleSize);
+  
+  page.drawText(title, {
+    x: width - margin - titleWidth,
     y,
-    size: 22,
+    size: titleSize,
     font: bold,
     color: primaryColor
   });
@@ -303,9 +388,9 @@ async function createPackingSlipPdf({
   // Return details box
   page.drawRectangle({
     x: margin,
-    y: y - 140,
+    y: y - 165,
     width: width - margin * 2,
-    height: 140,
+    height: 165,
     borderColor: lightGray,
     borderWidth: 1
   });
@@ -318,20 +403,73 @@ async function createPackingSlipPdf({
   drawLabelValue(page, "Shopify Order", `#${orderNumber || "-"}`, rightX, boxY, font, bold, midGray, darkText);
 
   boxY -= 42;
-  drawLabelValue(page, "Product", productName || "-", leftX, boxY, font, bold, midGray, darkText);
-  drawLabelValue(page, "SKU", sku || "-", rightX, boxY, font, bold, midGray, darkText);
+  const productLines = drawLabelValue(
+    page,
+    "Product",
+    productName || "-",
+    leftX,
+    boxY,
+    font,
+    bold,
+    midGray,
+    darkText,
+    {
+      maxWidth: 250,
+      maxLines: 3,
+      valueSize: 11.5,
+      lineHeight: 14
+    }
+  );
+  
+  drawLabelValue(
+    page,
+    "SKU",
+    sku || "-",
+    rightX,
+    boxY,
+    font,
+    bold,
+    midGray,
+    darkText,
+    {
+      maxWidth: 120,
+      maxLines: 2
+    }
+  );
 
-  boxY -= 42;
-  drawLabelValue(page, "Size", size || "-", leftX, boxY, font, bold, midGray, darkText);
+  boxY -= 42 + ((productLines - 1) * 14);
 
-  y -= 175;
+  drawLabelValue(
+    page,
+    "Size",
+    size || "-",
+    leftX,
+    boxY,
+    font,
+    bold,
+    midGray,
+    darkText
+  );
+  
+  y -= 200;
+
+  const returnReasons = [
+    "Too small",
+    "Too big",
+    "Not as expected",
+    "Changed mind",
+    "Damaged",
+    "Wrong item received",
+    "Defective",
+    "Other"
+  ];
 
   // Instructions box
   page.drawRectangle({
     x: margin,
-    y: y - 110,
+    y: y - 255,
     width: 320,
-    height: 110,
+    height: 255,
     borderColor: lightGray,
     borderWidth: 1
   });
@@ -363,6 +501,24 @@ async function createPackingSlipPdf({
     instructionY -= 16;
   }
 
+  page.drawText("Return Reason", {
+    x: margin + 20,
+    y: instructionY - 14,
+    size: 14,
+    font: bold,
+    color: primaryColor
+  });
+  
+  drawCheckboxList(
+    page,
+    returnReasons,
+    margin + 20,
+    instructionY - 38,
+    font,
+    darkText,
+    18
+  );
+
   // QR block
   page.drawRectangle({
     x: width - 180,
@@ -380,16 +536,18 @@ async function createPackingSlipPdf({
     height: 100
   });
 
+  const qrCenterX = width - 110;
+
   page.drawText("Scan Return ID", {
-    x: width - 150,
+    x: qrCenterX - (bold.widthOfTextAtSize("Scan Return ID", 10) / 2),
     y: y - 150,
     size: 10,
     font: bold,
     color: midGray
   });
-
+  
   page.drawText(returnId, {
-    x: width - 155,
+    x: qrCenterX - (bold.widthOfTextAtSize(returnId, 11) / 2),
     y: y - 165,
     size: 11,
     font: bold,
@@ -753,7 +911,7 @@ app.post("/create-return", async (req, res) => {
     const packingSlipPdf = await createPackingSlipPdf({
       merchantName: asText(merchantFields["Store Name"]) || asText(returnFields["Store Name"]) || "Store",
       merchantLogoUrl: getAttachmentUrl(merchantFields["Logo URL"]) || asText(merchantFields["Logo URL"]),
-      brandColor: asText(merchantFields["Brand Color"]) || "#111111",
+      brandColor: getBrandColor(merchantFields["Brand Color"]),
       returnId,
       orderNumber: asText(returnFields["Shopify Order Number"]),
       productName: asText(returnFields["Product Name"]),
