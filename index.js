@@ -469,7 +469,7 @@ async function createPackingSlipPdf({
     x: margin,
     y: y - 285,
     width: 320,
-    height: 295,
+    height: 310,
     borderColor: lightGray,
     borderWidth: 1
   });
