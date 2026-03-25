@@ -291,7 +291,7 @@ async function createIncomingReturn(orderRecordId, orderRecord) {
     ? orderFields["Client"].filter(Boolean)
     : [];
 
-  const shopifySellingPrice = orderFields["Shopify Selling Price"];
+  const shopifySellingPrice = orderFields["Selling Price"];
   const suggestedResalePrice = orderFields["Maximum Buying Price"];
   const matchRiskLevel = asText(orderFields["Match Risk Level"]);
 
