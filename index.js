@@ -99,6 +99,18 @@ function sanitizeFileName(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function buildSendcloudOrderNumber(storeName, shopifyOrderNumber) {
+  const cleanStore = asText(storeName)
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  const cleanShopifyOrderNumber = asText(shopifyOrderNumber)
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  return [cleanStore, cleanShopifyOrderNumber].filter(Boolean).join("-");
+}
+
 function buildBasicAuthHeader(publicKey, secretKey) {
   const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
   return `Basic ${token}`;
@@ -711,7 +723,12 @@ async function getReturnShippingOptionCode(countryCode) {
 
 /* ---------------- SENDCLOUD ---------------- */
 
-function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionCode }) {
+function mapOrderToSendcloudPayload({
+  customerAddress,
+  returnId,
+  shippingOptionCode,
+  sendcloudOrderNumber
+}) {
 
   const {
     name,
@@ -757,19 +774,27 @@ function mapOrderToSendcloudPayload({ customerAddress, returnId, shippingOptionC
       unit: "kg"
     },
 
+    order_number: sendcloudOrderNumber || undefined,
     external_reference: returnId
   };
 }
 
-async function createSendcloudReturnLabel({ customerAddress, returnId }) {
+async function createSendcloudReturnLabel({
+  customerAddress,
+  returnId,
+  storeName,
+  shopifyOrderNumber
+}) {
 
   const countryCode = customerAddress.country;
   const shippingOptionCode = await getReturnShippingOptionCode(countryCode);
+  const sendcloudOrderNumber = buildSendcloudOrderNumber(storeName, shopifyOrderNumber);
 
   const payload = mapOrderToSendcloudPayload({
     customerAddress,
     returnId,
-    shippingOptionCode
+    shippingOptionCode,
+    sendcloudOrderNumber
   });
 
   const res = await fetch(SENDCLOUD_RETURNS_URL, {
@@ -896,7 +921,9 @@ app.post("/create-return", async (req, res) => {
 
     const sendcloud = await createSendcloudReturnLabel({
       customerAddress,
-      returnId
+      returnId,
+      storeName: asText(orderRecord.fields["Store Name"]),
+      shopifyOrderNumber: asText(orderRecord.fields["Shopify Order Number"])
     });
     
     // download label
