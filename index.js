@@ -408,6 +408,18 @@ async function createPackingSlipPdf({
   return Buffer.from(await pdf.save());
 }
 
+async function mergePdfBuffers(buffers) {
+  const merged = await PDFDocument.create();
+
+  for (const buffer of buffers) {
+    const pdf = await PDFDocument.load(buffer);
+    const pages = await merged.copyPages(pdf, pdf.getPageIndices());
+    pages.forEach((page) => merged.addPage(page));
+  }
+
+  return Buffer.from(await merged.save());
+}
+
 async function uploadReturnPackage({ returnId, pdfBuffer }) {
 
   const key = `returns/${sanitizeFileName(returnId)}.pdf`;
