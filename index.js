@@ -91,6 +91,24 @@ function must(value, label) {
   return v;
 }
 
+function normalizeIncomingReturnVatType(orderVatType, overrideVatType) {
+  const override = asText(overrideVatType).toLowerCase();
+  if (override === "vat") return "VAT";
+  if (override === "margin") return "Margin";
+
+  const source = asText(orderVatType).toLowerCase();
+
+  if (source === "vat21" || source === "vat0" || source === "vat") {
+    return "VAT";
+  }
+
+  if (source === "margin") {
+    return "Margin";
+  }
+
+  return "";
+}
+
 function todayISO() {
   return new Date().toISOString();
 }
@@ -639,7 +657,7 @@ async function findExistingReturnByLinkedOrder(orderRecordId) {
   return matching[0] || null;
 }
 
-async function createIncomingReturn(orderRecordId, orderRecord) {
+async function createIncomingReturn(orderRecordId, orderRecord, vatTypeOverride = "") {
   const orderFields = orderRecord.fields || {};
 
   const clientLinked = Array.isArray(orderFields["Client"])
@@ -649,6 +667,10 @@ async function createIncomingReturn(orderRecordId, orderRecord) {
   const shopifySellingPrice = orderFields["Selling Price"];
   const suggestedResalePrice = orderFields["Maximum Buying Price"];
   const matchRiskLevel = asText(orderFields["Match Risk Level"]);
+  const incomingReturnVatType = normalizeIncomingReturnVatType(
+    orderFields["VAT Type"],
+    vatTypeOverride
+  );
 
   const created = await airtable(AIRTABLE_RETURNS_TABLE).create([
     {
@@ -666,6 +688,7 @@ async function createIncomingReturn(orderRecordId, orderRecord) {
         "Suggested Resale Price": suggestedResalePrice ?? null,
 
         "Match Risk Level": matchRiskLevel || null,
+        "VAT Type": incomingReturnVatType || null,
 
         "Client": clientLinked
       }
@@ -873,6 +896,7 @@ app.get("/", (_req, res) => {
 app.post("/create-return", async (req, res) => {
   try {
     const orderRecordId = asText(req.body?.order_record_id);
+    const vatTypeOverride = asText(req.body?.vat_type);
     if (!orderRecordId) {
       return res.status(400).json({ error: "Missing order_record_id" });
     }
@@ -912,7 +936,11 @@ app.post("/create-return", async (req, res) => {
       orderId: shopifyOrderId
     });
     const customerAddress = extractCustomerAddress(shopifyOrder);
-    const createdReturn = await createIncomingReturn(orderRecordId, orderRecord);
+    const createdReturn = await createIncomingReturn(
+      orderRecordId,
+      orderRecord,
+      vatTypeOverride
+    );
 
     // Re-fetch so Airtable formula fields like Return ID are available.
     const returnRecord = await getReturnRecord(createdReturn.id);
