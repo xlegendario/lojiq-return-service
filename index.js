@@ -284,15 +284,35 @@ async function findExistingReturnByLinkedOrder(orderRecordId) {
   return matching[0] || null;
 }
 
-async function createIncomingReturn(orderRecordId) {
+async function createIncomingReturn(orderRecordId, orderRecord) {
+  const orderFields = orderRecord.fields || {};
+  const clientLinked = Array.isArray(orderFields["Client"])
+    ? orderFields["Client"].filter(Boolean)
+    : [];
+
+  const shopifySellingPrice = orderFields["Shopify Selling Price"];
+  const suggestedResalePrice = orderFields["Maximum Buying Price"];
+
   const created = await airtable(AIRTABLE_RETURNS_TABLE).create([
     {
       fields: {
         "Linked Order": [orderRecordId],
-        "Return Status": "Registered"
+        "Return Status": "Registered",
+
+        "Store Name": asText(orderFields["Store Name"]),
+        "Shopify Order Number": asText(orderFields["Shopify Order Number"]),
+        "Product Name": asText(orderFields["Product Name"]),
+        "SKU": asText(orderFields["SKU"]),
+        "Size": asText(orderFields["Size"]),
+
+        "Shopify Selling Price": shopifySellingPrice ?? null,
+        "Suggested Resale Price": suggestedResalePrice ?? null,
+
+        "Client": clientLinked
       }
     }
   ]);
+
   return created[0];
 }
 
@@ -489,7 +509,7 @@ app.post("/create-return", async (req, res) => {
     if (existing) {
       return res.status(200).json({
         already_exists: true,
-        return_package_url: asText(existing.fields["Return Package URL"]),
+        return_package_url: asText(existing.fields["Packing Slip URL"]),
         return_id: asText(existing.fields["Return ID"])
       });
     }
@@ -520,7 +540,7 @@ app.post("/create-return", async (req, res) => {
       orderId: shopifyOrderId
     });
     const customerAddress = extractCustomerAddress(shopifyOrder);
-    const createdReturn = await createIncomingReturn(orderRecordId);
+    const createdReturn = await createIncomingReturn(orderRecordId, orderRecord);
 
     // Re-fetch so Airtable formula fields like Return ID are available.
     const returnRecord = await getReturnRecord(createdReturn.id);
