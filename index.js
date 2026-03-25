@@ -18,6 +18,7 @@ const {
   AIRTABLE_BASE_ID,
   AIRTABLE_ORDERS_TABLE = "Unfulfilled Orders Log",
   AIRTABLE_RETURNS_TABLE = "Incoming Returns",
+  AIRTABLE_RETURNS_TABLE_ID,
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_RETURN_METHODS_TABLE = "Return Shipping Methods",
   SENDCLOUD_PUBLIC_KEY,
@@ -42,6 +43,7 @@ const {
 const required = [
   "AIRTABLE_TOKEN",
   "AIRTABLE_BASE_ID",
+  "AIRTABLE_RETURNS_TABLE_ID",
   "SENDCLOUD_PUBLIC_KEY",
   "SENDCLOUD_SECRET_KEY",
   "R2_ACCOUNT_ID",
@@ -284,6 +286,7 @@ async function createPackingSlipPdf({
   merchantLogoUrl,
   brandColor,
   returnId,
+  airtableRecordId,
   orderNumber,
   productName,
   sku,
@@ -302,7 +305,7 @@ async function createPackingSlipPdf({
   const midGray = rgbFromHex("#6B7280");
   const darkText = rgbFromHex("#111827");
 
-  const scanUrl = `${APP_PUBLIC_BASE_URL.replace(/\/$/, "")}/scan/${encodeURIComponent(returnId)}`;
+  const scanUrl = `https://airtable.com/${AIRTABLE_BASE_ID}/${AIRTABLE_RETURNS_TABLE_ID}/${airtableRecordId}`;
   const qrDataUrl = await QRCode.toDataURL(scanUrl, { margin: 1, width: 300 });
 
   const qrImageBytes = Buffer.from(
@@ -911,8 +914,9 @@ app.post("/create-return", async (req, res) => {
     const packingSlipPdf = await createPackingSlipPdf({
       merchantName: asText(merchantFields["Store Name"]) || asText(returnFields["Store Name"]) || "Store",
       merchantLogoUrl: getAttachmentUrl(merchantFields["Logo URL"]) || asText(merchantFields["Logo URL"]),
-      brandColor: getBrandColor(merchantFields["Brand Color"]),
+      brandColor: asText(merchantFields["Brand Color"]) || "#111111",
       returnId,
+      airtableRecordId: returnRecord.id,
       orderNumber: asText(returnFields["Shopify Order Number"]),
       productName: asText(returnFields["Product Name"]),
       sku: asText(returnFields["SKU"]),
