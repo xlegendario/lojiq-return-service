@@ -467,29 +467,47 @@ async function createPackingSlipPdf({
   // Instructions box
   page.drawRectangle({
     x: margin,
-    y: y - 255,
+    y: y - 285,
     width: 320,
-    height: 255,
+    height: 295,
     borderColor: lightGray,
     borderWidth: 1
   });
 
-  page.drawText("Instructions", {
+  page.drawText("Return Reason", {
     x: margin + 20,
     y: y - 25,
     size: 14,
     font: bold,
     color: primaryColor
   });
-
+  
+  drawCheckboxList(
+    page,
+    returnReasons,
+    margin + 20,
+    y - 48,
+    font,
+    darkText,
+    18
+  );
+  
+  page.drawText("Instructions", {
+    x: margin + 20,
+    y: y - 205,
+    size: 14,
+    font: bold,
+    color: primaryColor
+  });
+  
   const instructionLines = [
     "1. Print this packing slip.",
     "2. Place this slip inside the parcel.",
     "3. Attach the return label to the outside of the box.",
     "4. Drop off the parcel at the carrier point."
   ];
-
-  let instructionY = y - 48;
+  
+  let instructionY = y - 228;
   for (const line of instructionLines) {
     page.drawText(line, {
       x: margin + 20,
@@ -500,24 +518,6 @@ async function createPackingSlipPdf({
     });
     instructionY -= 16;
   }
-
-  page.drawText("Return Reason", {
-    x: margin + 20,
-    y: instructionY - 14,
-    size: 14,
-    font: bold,
-    color: primaryColor
-  });
-  
-  drawCheckboxList(
-    page,
-    returnReasons,
-    margin + 20,
-    instructionY - 38,
-    font,
-    darkText,
-    18
-  );
 
   // QR block
   page.drawRectangle({
