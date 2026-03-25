@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import express from "express";
 import Airtable from "airtable";
 import QRCode from "qrcode";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 dotenv.config();
@@ -107,6 +107,15 @@ function getAttachmentUrl(fieldValue) {
   return fieldValue[0].url;
 }
 
+async function fetchImageBytes(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch image from ${url}: ${res.status} ${text}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 async function fetchBuffer(url, headers = {}) {
   const res = await fetch(url, { headers });
   if (!res.ok) {
@@ -157,85 +166,246 @@ function extractCustomerAddress(shopifyOrder) {
   };
 }
 
+function rgbFromHex(hex) {
+  const clean = (hex || "#111111").replace("#", "");
+  const normalized = clean.length === 3
+    ? clean.split("").map((c) => c + c).join("")
+    : clean;
+
+  const num = parseInt(normalized, 16);
+  const r = ((num >> 16) & 255) / 255;
+  const g = ((num >> 8) & 255) / 255;
+  const b = (num & 255) / 255;
+
+  return { r, g, b };
+}
+
+function drawLabelValue(page, label, value, x, y, font, bold, labelColor, valueColor) {
+  page.drawText(label, {
+    x,
+    y,
+    size: 9,
+    font,
+    color: labelColor
+  });
+
+  page.drawText(String(value || "-"), {
+    x,
+    y: y - 16,
+    size: 13,
+    font: bold,
+    color: valueColor
+  });
+}
+
 async function createPackingSlipPdf({
   merchantName,
+  merchantLogoUrl,
+  brandColor,
   returnId,
   orderNumber,
   productName,
   sku,
   size
 }) {
-
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([595, 842]);
-  
-  const scanUrl = `${APP_PUBLIC_BASE_URL}/scan/${returnId}`;
-  
-  const qrDataUrl = await QRCode.toDataURL(scanUrl);
-  
-  const qrImageBytes = Buffer.from(
-    qrDataUrl.replace(/^data:image\/png;base64,/, ""),
-    "base64"
-  );
-  
-  const qrImage = await pdf.embedPng(qrImageBytes);
+
+  const { width, height } = page.getSize();
 
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
-  let y = 780;
+  const primaryColor = rgbFromHex(brandColor || "#111111");
+  const lightGray = rgbFromHex("#E5E7EB");
+  const midGray = rgbFromHex("#6B7280");
+  const darkText = rgbFromHex("#111827");
 
-  page.drawText(`${merchantName} Return Slip`, {
-    x: 50,
-    y,
-    size: 22,
-    font: bold
-  });
+  const scanUrl = `${APP_PUBLIC_BASE_URL.replace(/\/$/, "")}/scan/${encodeURIComponent(returnId)}`;
+  const qrDataUrl = await QRCode.toDataURL(scanUrl, { margin: 1, width: 300 });
 
-  y -= 60;
+  const qrImageBytes = Buffer.from(
+    qrDataUrl.replace(/^data:image\/png;base64,/, ""),
+    "base64"
+  );
+  const qrImage = await pdf.embedPng(qrImageBytes);
 
-  const fields = [
-    ["Return ID", returnId],
-    ["Order", orderNumber],
-    ["Product", productName],
-    ["SKU", sku],
-    ["Size", size]
-  ];
+  let logoImage = null;
+  if (merchantLogoUrl) {
+    try {
+      const logoBytes = await fetchImageBytes(merchantLogoUrl);
 
-  for (const [label, value] of fields) {
-    page.drawText(`${label}: ${value || "-"}`, {
-      x: 50,
-      y,
-      size: 14,
-      font
-    });
-
-    y -= 28;
+      if (merchantLogoUrl.toLowerCase().includes(".png")) {
+        logoImage = await pdf.embedPng(logoBytes);
+      } else {
+        try {
+          logoImage = await pdf.embedJpg(logoBytes);
+        } catch {
+          logoImage = await pdf.embedPng(logoBytes);
+        }
+      }
+    } catch (err) {
+      console.error("Could not load merchant logo:", err.message);
+    }
   }
 
+  const margin = 40;
+  let y = height - 50;
+
+  // Header line
+  page.drawRectangle({
+    x: margin,
+    y: y - 8,
+    width: width - margin * 2,
+    height: 3,
+    color: primaryColor
+  });
+
+  y -= 35;
+
+  // Logo or merchant name
+  if (logoImage) {
+    const maxLogoWidth = 160;
+    const maxLogoHeight = 50;
+    const scale = Math.min(
+      maxLogoWidth / logoImage.width,
+      maxLogoHeight / logoImage.height
+    );
+    const logoWidth = logoImage.width * scale;
+    const logoHeight = logoImage.height * scale;
+
+    page.drawImage(logoImage, {
+      x: margin,
+      y: y - logoHeight + 10,
+      width: logoWidth,
+      height: logoHeight
+    });
+  } else {
+    page.drawText(merchantName || "Store", {
+      x: margin,
+      y,
+      size: 20,
+      font: bold,
+      color: darkText
+    });
+  }
+
+  page.drawText("Return Packing Slip", {
+    x: width - 210,
+    y,
+    size: 22,
+    font: bold,
+    color: primaryColor
+  });
+
+  y -= 70;
+
+  // Return details box
+  page.drawRectangle({
+    x: margin,
+    y: y - 140,
+    width: width - margin * 2,
+    height: 140,
+    borderColor: lightGray,
+    borderWidth: 1
+  });
+
+  const leftX = margin + 20;
+  const rightX = margin + 280;
+  let boxY = y - 25;
+
+  drawLabelValue(page, "Return ID", returnId, leftX, boxY, font, bold, midGray, darkText);
+  drawLabelValue(page, "Shopify Order", `#${orderNumber || "-"}`, rightX, boxY, font, bold, midGray, darkText);
+
+  boxY -= 42;
+  drawLabelValue(page, "Product", productName || "-", leftX, boxY, font, bold, midGray, darkText);
+  drawLabelValue(page, "SKU", sku || "-", rightX, boxY, font, bold, midGray, darkText);
+
+  boxY -= 42;
+  drawLabelValue(page, "Size", size || "-", leftX, boxY, font, bold, midGray, darkText);
+
+  y -= 175;
+
+  // Instructions box
+  page.drawRectangle({
+    x: margin,
+    y: y - 110,
+    width: 320,
+    height: 110,
+    borderColor: lightGray,
+    borderWidth: 1
+  });
+
+  page.drawText("Instructions", {
+    x: margin + 20,
+    y: y - 25,
+    size: 14,
+    font: bold,
+    color: primaryColor
+  });
+
+  const instructionLines = [
+    "1. Print this packing slip.",
+    "2. Place this slip inside the parcel.",
+    "3. Attach the return label to the outside of the box.",
+    "4. Drop off the parcel at the carrier point."
+  ];
+
+  let instructionY = y - 48;
+  for (const line of instructionLines) {
+    page.drawText(line, {
+      x: margin + 20,
+      y: instructionY,
+      size: 10.5,
+      font,
+      color: darkText
+    });
+    instructionY -= 16;
+  }
+
+  // QR block
+  page.drawRectangle({
+    x: width - 180,
+    y: y - 180,
+    width: 140,
+    height: 180,
+    borderColor: lightGray,
+    borderWidth: 1
+  });
+
   page.drawImage(qrImage, {
-    x: 420,
-    y: 600,
-    width: 120,
-    height: 120
+    x: width - 160,
+    y: y - 135,
+    width: 100,
+    height: 100
+  });
+
+  page.drawText("Scan Return ID", {
+    x: width - 150,
+    y: y - 150,
+    size: 10,
+    font: bold,
+    color: midGray
+  });
+
+  page.drawText(returnId, {
+    x: width - 155,
+    y: y - 165,
+    size: 11,
+    font: bold,
+    color: darkText
+  });
+
+  // Footer
+  page.drawText("Generated by Lojiq Returns", {
+    x: margin,
+    y: 30,
+    size: 9,
+    font,
+    color: midGray
   });
 
   return Buffer.from(await pdf.save());
-}
-
-async function mergePdfBuffers(buffers) {
-
-  const merged = await PDFDocument.create();
-
-  for (const buffer of buffers) {
-
-    const pdf = await PDFDocument.load(buffer);
-    const pages = await merged.copyPages(pdf, pdf.getPageIndices());
-
-    pages.forEach(p => merged.addPage(p));
-  }
-
-  return Buffer.from(await merged.save());
 }
 
 async function uploadReturnPackage({ returnId, pdfBuffer }) {
@@ -569,12 +739,14 @@ app.post("/create-return", async (req, res) => {
     
     // create packing slip
     const packingSlipPdf = await createPackingSlipPdf({
-      merchantName: merchantFields["Store Name"],
+      merchantName: asText(merchantFields["Store Name"]) || asText(returnFields["Store Name"]) || "Store",
+      merchantLogoUrl: getAttachmentUrl(merchantFields["Logo URL"]) || asText(merchantFields["Logo URL"]),
+      brandColor: asText(merchantFields["Brand Color"]) || "#111111",
       returnId,
-      orderNumber: returnFields["Shopify Order Number"],
-      productName: returnFields["Product Name"],
-      sku: returnFields["SKU"],
-      size: returnFields["Size"]
+      orderNumber: asText(returnFields["Shopify Order Number"]),
+      productName: asText(returnFields["Product Name"]),
+      sku: asText(returnFields["SKU"]),
+      size: asText(returnFields["Size"])
     });
     
     // merge PDFs
