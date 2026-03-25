@@ -286,12 +286,14 @@ async function findExistingReturnByLinkedOrder(orderRecordId) {
 
 async function createIncomingReturn(orderRecordId, orderRecord) {
   const orderFields = orderRecord.fields || {};
+
   const clientLinked = Array.isArray(orderFields["Client"])
     ? orderFields["Client"].filter(Boolean)
     : [];
 
   const shopifySellingPrice = orderFields["Shopify Selling Price"];
   const suggestedResalePrice = orderFields["Maximum Buying Price"];
+  const matchRiskLevel = asText(orderFields["Match Risk Level"]);
 
   const created = await airtable(AIRTABLE_RETURNS_TABLE).create([
     {
@@ -307,6 +309,8 @@ async function createIncomingReturn(orderRecordId, orderRecord) {
 
         "Shopify Selling Price": shopifySellingPrice ?? null,
         "Suggested Resale Price": suggestedResalePrice ?? null,
+
+        "Match Risk Level": matchRiskLevel || null,
 
         "Client": clientLinked
       }
