@@ -177,7 +177,7 @@ function rgbFromHex(hex) {
   const g = ((num >> 8) & 255) / 255;
   const b = (num & 255) / 255;
 
-  return { r, g, b };
+  return rgb(r, g, b); // ✅ THIS is the fix
 }
 
 function drawLabelValue(page, label, value, x, y, font, bold, labelColor, valueColor) {
