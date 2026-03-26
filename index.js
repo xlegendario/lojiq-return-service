@@ -851,16 +851,22 @@ async function getMerchantBySubmitReturnChannelId(channelId) {
 }
 
 async function findExistingReturnByClientOrderAndLineItem(clientId, shopifyOrderNumber, lineItemId) {
-  const safeClientId = escapeAirtableFormulaValue(clientId);
-  const safeOrderNumber = escapeAirtableFormulaValue(shopifyOrderNumber);
-  const safeLineItemId = escapeAirtableFormulaValue(lineItemId);
+  const safeClientId = escapeAirtableFormulaValue(asText(clientId));
+  const safeOrderNumber = escapeAirtableFormulaValue(asText(shopifyOrderNumber).replace(/^#/, "").trim());
+  const safeLineItemId = escapeAirtableFormulaValue(asText(lineItemId).trim());
+
+  console.log("Duplicate check:", {
+    clientId: safeClientId,
+    shopifyOrderNumber: safeOrderNumber,
+    lineItemId: safeLineItemId
+  });
 
   const records = await airtable(AIRTABLE_RETURNS_TABLE)
     .select({
       filterByFormula: `AND(
-        ARRAYJOIN({Client}) = '${safeClientId}',
-        {Shopify Order Number} = '${safeOrderNumber}',
-        {Shopify Line Item ID} = ${Number(safeLineItemId)}
+        FIND('${safeClientId}', ARRAYJOIN({Client})) > 0,
+        TRIM({Shopify Order Number} & '') = '${safeOrderNumber}',
+        TRIM({Shopify Line Item ID} & '') = '${safeLineItemId}'
       )`,
       maxRecords: 1
     })
