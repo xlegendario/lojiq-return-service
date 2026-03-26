@@ -252,15 +252,16 @@ function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
 
   return lineItems.map((item) => ({
     line_item_id: String(item.id),
-    product_id: String(item.product_id),   // 👈 ADD THIS
-    variant_id: String(item.variant_id), // 👈 ADD THIS
+    product_id: item.product_id ? String(item.product_id) : "",
+    variant_id: item.variant_id ? String(item.variant_id) : "",
     product_name: asText(item.title),
     sku: asText(item.sku),
     size: asText(item.variant_title),
     quantity: item.quantity ?? 1,
-    selling_price: item.price ?? null
+    selling_price: item.price
   }));
 }
+
 function rgbFromHex(hex) {
   const clean = (hex || "#111111").replace("#", "");
   const normalized = clean.length === 3
@@ -686,6 +687,8 @@ async function triggerMakeManualReturnEnrichment({
   shopifyOrderNumber,
   shopifyOrderId,
   lineItemId,
+  productId,
+  variantId,
   productName,
   sku,
   size,
@@ -711,10 +714,12 @@ async function triggerMakeManualReturnEnrichment({
       shopify_order_number: asText(shopifyOrderNumber),
       shopify_order_id: asText(shopifyOrderId),
       line_item_id: asText(lineItemId),
+      product_id: asText(productId),
+      variant_id: asText(variantId),
       product_name: asText(productName),
       sku: asText(sku),
       size: asText(size),
-      selling_price: asText(sellingPrice),
+      selling_price: sellingPrice ?? null,
       vat_type: asText(vatType)
     })
   });
@@ -888,6 +893,8 @@ async function createManualIncomingReturn({
   shopifyOrderNumber,
   shopifyOrderId,
   lineItemId,
+  productId,
+  variantId,
   productName,
   sku,
   size,
@@ -908,7 +915,9 @@ async function createManualIncomingReturn({
         "Product Name": asText(productName),
         "SKU": asText(sku),
         "Size": asText(size),
-        "Shopify Selling Price": toNumberOrNull(sellingPrice),
+        "Product ID": asText(productId),
+        "Variant ID": asText(variantId),
+        "Shopify Selling Price": sellingPrice ?? null,
         "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
         "Client": clientLinked
       }
@@ -1192,10 +1201,12 @@ app.post("/create-manual-return", async (req, res) => {
     const shopifyOrderNumber = asText(req.body?.shopify_order_number);
     const shopifyOrderId = asText(req.body?.shopify_order_id);
     const lineItemId = asText(req.body?.line_item_id);
+    const productId = asText(req.body?.product_id);
+    const variantId = asText(req.body?.variant_id);
     const productName = asText(req.body?.product_name);
     const sku = asText(req.body?.sku);
     const size = asText(req.body?.size);
-    const sellingPrice = req.body?.selling_price; // 👈 ADD THIS
+    const sellingPrice = req.body?.selling_price;
     const vatType = asText(req.body?.vat_type);
 
     if (!submitChannelId) {
@@ -1261,6 +1272,8 @@ app.post("/create-manual-return", async (req, res) => {
       shopifyOrderNumber,
       shopifyOrderId,
       lineItemId,
+      productId,
+      variantId,
       productName,
       sku,
       size,
@@ -1278,6 +1291,8 @@ app.post("/create-manual-return", async (req, res) => {
         shopifyOrderNumber,
         shopifyOrderId,
         lineItemId,
+        productId,
+        variantId,
         productName,
         sku,
         size,
