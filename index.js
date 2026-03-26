@@ -252,6 +252,7 @@ function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
 
   return lineItems.map((item) => ({
     line_item_id: String(item.id),
+    product_id: String(item.product_id),   // 👈 ADD THIS
     variant_id: String(item.variant_id), // 👈 ADD THIS
     product_name: asText(item.title),
     sku: asText(item.sku),
