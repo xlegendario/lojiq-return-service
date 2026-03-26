@@ -76,6 +76,18 @@ const r2 = new S3Client({
 
 /* ---------------- HELPERS ---------------- */
 
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+
+  const normalized = String(value)
+    .trim()
+    .replace(/[€\s]/g, "")
+    .replace(",", ".");
+
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
 function first(value) {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
@@ -250,7 +262,7 @@ function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
     sku: asText(item.sku),
     size: asText(item.variant_title),
     quantity: item.quantity ?? 1,
-    selling_price: asText(item.price)
+    selling_price: item.price
   }));
 }
 
@@ -889,7 +901,7 @@ async function createManualIncomingReturn({
         "Product Name": asText(productName),
         "SKU": asText(sku),
         "Size": asText(size),
-        "Shopify Selling Price": sellingPrice || null,
+        "Shopify Selling Price": toNumberOrNull(sellingPrice),
         "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
         "Client": clientLinked
       }
@@ -1176,7 +1188,7 @@ app.post("/create-manual-return", async (req, res) => {
     const productName = asText(req.body?.product_name);
     const sku = asText(req.body?.sku);
     const size = asText(req.body?.size);
-    const sellingPrice = asText(req.body?.selling_price);
+    const sellingPrice = req.body?.selling_price; // 👈 ADD THIS
     const vatType = asText(req.body?.vat_type);
 
     if (!submitChannelId) {
