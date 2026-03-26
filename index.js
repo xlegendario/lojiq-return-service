@@ -917,7 +917,7 @@ async function createManualIncomingReturn({
         "Size": asText(size),
         "Product ID": asText(productId),
         "Variant ID": asText(variantId),
-        "Shopify Selling Price": sellingPrice ?? null,
+        "Shopify Selling Price": toNumberOrNull(sellingPrice),
         "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
         "Client": clientLinked
       }
