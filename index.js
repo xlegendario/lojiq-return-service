@@ -213,6 +213,46 @@ function extractCustomerAddress(shopifyOrder) {
   };
 }
 
+async function findShopifyOrderByOrderNumber({ shopDomain, accessToken, shopifyOrderNumber }) {
+  const normalizedOrderNumber = asText(shopifyOrderNumber).replace(/^#/, "");
+  const orderName = `#${normalizedOrderNumber}`;
+
+  const url = `https://${shopDomain}/admin/api/2024-10/orders.json?status=any&limit=1&name=${encodeURIComponent(orderName)}`;
+
+  const res = await fetch(url, {
+    headers: {
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Shopify order lookup failed: ${res.status} ${text}`);
+  }
+
+  const data = await res.json();
+  const order = data?.orders?.[0];
+
+  if (!order) {
+    throw new Error(`Shopify order not found for order number ${normalizedOrderNumber}`);
+  }
+
+  return order;
+}
+
+function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
+  const lineItems = Array.isArray(shopifyOrder?.line_items) ? shopifyOrder.line_items : [];
+
+  return lineItems.map((item) => ({
+    line_item_id: String(item.id),
+    product_name: asText(item.title),
+    sku: asText(item.sku),
+    size: asText(item.variant_title),
+    quantity: item.quantity ?? 1
+  }));
+}
+
 function rgbFromHex(hex) {
   const clean = (hex || "#111111").replace("#", "");
   const normalized = clean.length === 3
@@ -812,6 +852,11 @@ async function findExistingReturnByClientAndOrderNumber(clientId, shopifyOrderNu
 async function createManualIncomingReturn({
   merchantRecord,
   shopifyOrderNumber,
+  shopifyOrderId,
+  lineItemId,
+  productName,
+  sku,
+  size,
   vatType
 }) {
   const merchantFields = merchantRecord.fields || {};
@@ -823,6 +868,11 @@ async function createManualIncomingReturn({
         "Return Status": "Pending Enrichment",
         "Store Name": asText(merchantFields["Store Name"]),
         "Shopify Order Number": asText(shopifyOrderNumber),
+        "Shopify Order ID": asText(shopifyOrderId),
+        "Shopify Line Item ID": asText(lineItemId),
+        "Product Name": asText(productName),
+        "SKU": asText(sku),
+        "Size": asText(size),
         "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
         "Client": clientLinked
       }
@@ -1104,6 +1154,11 @@ app.post("/create-manual-return", async (req, res) => {
   try {
     const submitChannelId = asText(req.body?.submit_channel_id);
     const shopifyOrderNumber = asText(req.body?.shopify_order_number);
+    const shopifyOrderId = asText(req.body?.shopify_order_id);
+    const lineItemId = asText(req.body?.line_item_id);
+    const productName = asText(req.body?.product_name);
+    const sku = asText(req.body?.sku);
+    const size = asText(req.body?.size);
     const vatType = asText(req.body?.vat_type);
 
     if (!submitChannelId) {
@@ -1124,6 +1179,18 @@ app.post("/create-manual-return", async (req, res) => {
       return res.status(400).json({
         error: "vat_type must be VAT or Margin"
       });
+    }
+
+    if (!shopifyOrderId) {
+      return res.status(400).json({ error: "Missing shopify_order_id" });
+    }
+    
+    if (!lineItemId) {
+      return res.status(400).json({ error: "Missing line_item_id" });
+    }
+    
+    if (!productName) {
+      return res.status(400).json({ error: "Missing product_name" });
     }
 
     const merchantRecord = await getMerchantBySubmitReturnChannelId(submitChannelId);
@@ -1156,6 +1223,11 @@ app.post("/create-manual-return", async (req, res) => {
     const createdReturn = await createManualIncomingReturn({
       merchantRecord,
       shopifyOrderNumber,
+      shopifyOrderId,
+      lineItemId,
+      productName,
+      sku,
+      size,
       vatType
     });
     
@@ -1189,6 +1261,66 @@ app.post("/create-manual-return", async (req, res) => {
     console.error("/create-manual-return failed:", error);
     return res.status(500).json({
       error: "Failed to create manual return",
+      details: error.message
+    });
+  }
+});
+
+app.post("/lookup-manual-return-order", async (req, res) => {
+  try {
+    const submitChannelId = asText(req.body?.submit_channel_id);
+    const shopifyOrderNumber = asText(req.body?.shopify_order_number);
+
+    if (!submitChannelId) {
+      return res.status(400).json({ error: "Missing submit_channel_id" });
+    }
+
+    if (!shopifyOrderNumber) {
+      return res.status(400).json({ error: "Missing shopify_order_number" });
+    }
+
+    const merchantRecord = await getMerchantBySubmitReturnChannelId(submitChannelId);
+
+    if (!merchantRecord) {
+      return res.status(404).json({
+        error: "No merchant found for this submit channel"
+      });
+    }
+
+    const merchantFields = merchantRecord.fields || {};
+
+    const shopDomain = asText(merchantFields["Shopify Store URL"])
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+
+    const accessToken = asText(merchantFields["Shopify Token"]);
+
+    if (!shopDomain || !accessToken) {
+      throw new Error("Merchant Shopify credentials missing");
+    }
+
+    const shopifyOrder = await findShopifyOrderByOrderNumber({
+      shopDomain,
+      accessToken,
+      shopifyOrderNumber
+    });
+
+    const items = extractReturnableItemsFromShopifyOrder(shopifyOrder);
+
+    if (!items.length) {
+      throw new Error("No line items found on Shopify order");
+    }
+
+    return res.status(200).json({
+      ok: true,
+      shopify_order_id: String(shopifyOrder.id),
+      shopify_order_number: asText(shopifyOrder.order_number || shopifyOrderNumber),
+      items
+    });
+  } catch (error) {
+    console.error("/lookup-manual-return-order failed:", error);
+    return res.status(500).json({
+      error: "Failed to lookup manual return order",
       details: error.message
     });
   }
