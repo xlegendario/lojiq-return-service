@@ -777,7 +777,6 @@ async function findExistingReturnByClientAndOrderNumber(clientId, shopifyOrderNu
 
 async function createManualIncomingReturn({
   merchantRecord,
-  submitChannelId,
   shopifyOrderNumber,
   vatType
 }) {
@@ -791,10 +790,7 @@ async function createManualIncomingReturn({
         "Store Name": asText(merchantFields["Store Name"]),
         "Shopify Order Number": asText(shopifyOrderNumber),
         "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
-        "Client": clientLinked,
-        "Source": "Discord Manual Submit",
-        "Returns Channel ID": asText(merchantFields["Returns Channel ID"]),
-        "Submit Return Channel ID": asText(submitChannelId)
+        "Client": clientLinked
       }
     }
   ]);
@@ -1125,7 +1121,6 @@ app.post("/create-manual-return", async (req, res) => {
 
     const createdReturn = await createManualIncomingReturn({
       merchantRecord,
-      submitChannelId,
       shopifyOrderNumber,
       vatType
     });
@@ -1204,7 +1199,6 @@ app.post("/process-existing-return", async (req, res) => {
 
     await updateReturnRecord(returnRecord.id, {
       "Return Status": "Processing",
-      "Error Reason": null
     });
 
     const shopifyOrder = await getShopifyOrder({
@@ -1261,7 +1255,6 @@ app.post("/process-existing-return", async (req, res) => {
       "Return Label URL": sendcloud.labelUrl,
       "Packing Slip URL": returnPackageUrl,
       "Return Status": "Label Generated",
-      "Error Reason": null
     });
 
     return res.status(200).json({
@@ -1287,7 +1280,6 @@ app.post("/process-existing-return", async (req, res) => {
       try {
         await updateReturnRecord(returnRecordId, {
           "Return Status": "Failed",
-          "Error Reason": error.message
         });
       } catch (updateError) {
         console.error("Failed to mark return as failed:", updateError);
