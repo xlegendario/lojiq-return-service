@@ -37,7 +37,8 @@ const {
   R2_SECRET_ACCESS_KEY,
   R2_BUCKET,
   R2_PUBLIC_BASE_URL,
-  APP_PUBLIC_BASE_URL
+  APP_PUBLIC_BASE_URL,
+  MAKE_MANUAL_RETURN_WEBHOOK_URL
 } = process.env;
 
 const required = [
@@ -631,6 +632,39 @@ async function uploadReturnPackage({ returnId, pdfBuffer }) {
   return `${R2_PUBLIC_BASE_URL}/${key}`;
 }
 
+async function triggerMakeManualReturnEnrichment({
+  returnRecordId,
+  merchantRecord,
+  shopifyOrderNumber,
+  vatType
+}) {
+  if (!MAKE_MANUAL_RETURN_WEBHOOK_URL) {
+    console.warn("MAKE_MANUAL_RETURN_WEBHOOK_URL not configured, skipping Make trigger");
+    return;
+  }
+
+  const merchantFields = merchantRecord.fields || {};
+
+  const res = await fetch(MAKE_MANUAL_RETURN_WEBHOOK_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      return_record_id: returnRecordId,
+      merchant_record_id: merchantRecord.id,
+      store_name: asText(merchantFields["Store Name"]),
+      shopify_order_number: asText(shopifyOrderNumber),
+      vat_type: asText(vatType)
+    })
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Make webhook failed: ${res.status} ${text}`);
+  }
+}
+
 /* ---------------- AIRTABLE ---------------- */
 
 async function getOrderRecord(orderRecordId) {
@@ -1124,14 +1158,33 @@ app.post("/create-manual-return", async (req, res) => {
       shopifyOrderNumber,
       vatType
     });
-
+    
+    let makeTriggered = true;
+    let makeError = "";
+    
+    try {
+      await triggerMakeManualReturnEnrichment({
+        returnRecordId: createdReturn.id,
+        merchantRecord,
+        shopifyOrderNumber,
+        vatType
+      });
+    } catch (err) {
+      makeTriggered = false;
+      makeError = err.message;
+      console.error("Failed to trigger Make enrichment:", err);
+    }
+    
     return res.status(200).json({
       ok: true,
       already_exists: false,
       return_record_id: createdReturn.id,
       returns_channel_id: asText(merchantFields["Returns Channel ID"]),
-      store_name: asText(merchantFields["Store Name"])
+      store_name: asText(merchantFields["Store Name"]),
+      make_triggered: makeTriggered,
+      make_error: makeError || undefined
     });
+    
   } catch (error) {
     console.error("/create-manual-return failed:", error);
     return res.status(500).json({
