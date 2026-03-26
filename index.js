@@ -850,27 +850,33 @@ async function getMerchantBySubmitReturnChannelId(channelId) {
   return records[0] || null;
 }
 
-async function findExistingReturnByClientOrderAndLineItem(clientId, shopifyOrderNumber, lineItemId) {
-  const safeClientId = escapeAirtableFormulaValue(asText(clientId));
+async function findExistingReturnByStoreOrderAndLineItem(storeName, shopifyOrderNumber, lineItemId) {
+  const safeStoreName = escapeAirtableFormulaValue(asText(storeName).trim());
   const safeOrderNumber = escapeAirtableFormulaValue(asText(shopifyOrderNumber).replace(/^#/, "").trim());
   const safeLineItemId = escapeAirtableFormulaValue(asText(lineItemId).trim());
 
   console.log("Duplicate check:", {
-    clientId: safeClientId,
+    storeName: safeStoreName,
     shopifyOrderNumber: safeOrderNumber,
     lineItemId: safeLineItemId
   });
 
+  const formula = `AND(
+    TRIM({Store Name} & '') = '${safeStoreName}',
+    TRIM({Shopify Order Number} & '') = '${safeOrderNumber}',
+    TRIM({Shopify Line Item ID} & '') = '${safeLineItemId}'
+  )`;
+
+  console.log("Duplicate formula:", formula);
+
   const records = await airtable(AIRTABLE_RETURNS_TABLE)
     .select({
-      filterByFormula: `AND(
-        FIND('${safeClientId}', ARRAYJOIN({Client})) > 0,
-        TRIM({Shopify Order Number} & '') = '${safeOrderNumber}',
-        TRIM({Shopify Line Item ID} & '') = '${safeLineItemId}'
-      )`,
+      filterByFormula: formula,
       maxRecords: 1
     })
     .firstPage();
+
+  console.log("Duplicate matches found:", records.length);
 
   return records[0] || null;
 }
@@ -1231,10 +1237,8 @@ app.post("/create-manual-return", async (req, res) => {
     }
 
     const merchantFields = merchantRecord.fields || {};
-    const clientRecordId = merchantRecord.id;
-
-    const existing = await findExistingReturnByClientOrderAndLineItem(
-      clientRecordId,
+    const existing = await findExistingReturnByStoreOrderAndLineItem(
+      asText(merchantFields["Store Name"]),
       shopifyOrderNumber,
       lineItemId
     );
