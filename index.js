@@ -262,6 +262,13 @@ function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
   }));
 }
 
+function findLineItemById(shopifyOrder, lineItemId) {
+  const items = Array.isArray(shopifyOrder?.line_items) ? shopifyOrder.line_items : [];
+  const targetId = asText(lineItemId);
+
+  return items.find((item) => asText(item.id) === targetId) || null;
+}
+
 function rgbFromHex(hex) {
   const clean = (hex || "#111111").replace("#", "");
   const normalized = clean.length === 3
@@ -1118,6 +1125,25 @@ app.post("/create-return", async (req, res) => {
       accessToken,
       orderId: shopifyOrderId
     });
+
+    const shopifyLineItemId = asText(orderRecord.fields["Shopify Line Item ID"]);
+    const matchedLineItem = shopifyLineItemId
+      ? findLineItemById(shopifyOrder, shopifyLineItemId)
+      : null;
+
+    const currentSellingPriceFromShopify =
+      matchedLineItem?.price !== undefined && matchedLineItem?.price !== null
+        ? Number(matchedLineItem.price)
+        : null;
+
+    const currentVariantId = matchedLineItem?.variant_id
+      ? String(matchedLineItem.variant_id)
+      : "";
+
+    const currentProductId = matchedLineItem?.product_id
+      ? String(matchedLineItem.product_id)
+      : "";
+
     const customerAddress = extractCustomerAddress(shopifyOrder);
     const createdReturn = await createIncomingReturn(
       orderRecordId,
@@ -1179,6 +1205,23 @@ app.post("/create-return", async (req, res) => {
       "Return Label URL": sendcloud.labelUrl,
       "Packing Slip URL": returnPackageUrl,
       "Return Status": "Label Generated"
+    });
+
+    triggerMakeManualReturnEnrichment({
+      returnRecordId: returnRecord.id,
+      merchantRecord,
+      shopifyOrderNumber: asText(orderRecord.fields["Shopify Order Number"]),
+      shopifyOrderId: asText(orderRecord.fields["Shopify Order ID"]),
+      lineItemId: shopifyLineItemId,
+      productId: currentProductId,
+      variantId: currentVariantId,
+      productName: asText(returnFields["Product Name"]),
+      sku: asText(returnFields["SKU"]),
+      size: asText(returnFields["Size"]),
+      sellingPrice: currentSellingPriceFromShopify,
+      vatType: asText(returnFields["VAT Type"])
+    }).catch((err) => {
+      console.error("Failed to trigger Make enrichment from create-return:", err);
     });
 
     return res.status(200).json({
