@@ -78,14 +78,8 @@ const r2 = new S3Client({
 
 function toNumberOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
-
-  const normalized = String(value)
-    .trim()
-    .replace(/[€\s]/g, "")
-    .replace(",", ".");
-
-  const num = Number(normalized);
-  return Number.isFinite(num) ? num : null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function first(value) {
