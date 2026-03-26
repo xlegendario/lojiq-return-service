@@ -91,6 +91,10 @@ function must(value, label) {
   return v;
 }
 
+function escapeAirtableFormulaValue(value) {
+  return asText(value).replace(/'/g, "\\'");
+}
+
 function normalizeIncomingReturnVatType(orderVatType, overrideVatType) {
   const override = asText(overrideVatType).toLowerCase();
   if (override === "vat") return "VAT";
@@ -703,14 +707,11 @@ async function getReturnRecord(returnRecordId) {
 }
 
 async function getMerchantByClientId(clientId) {
-  const records = await airtable(AIRTABLE_MERCHANTS_TABLE)
-    .select({
-      filterByFormula: `{Client ID} = '${clientId}'`,
-      maxRecords: 1
-    })
-    .firstPage();
-
-  return records[0] || null;
+  try {
+    return await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
+  } catch {
+    return null;
+  }
 }
 
 async function updateReturnRecord(returnRecordId, fields) {
@@ -742,6 +743,63 @@ async function getReturnShippingOptionCode(countryCode) {
   }
 
   return option;
+}
+
+async function getMerchantBySubmitReturnChannelId(channelId) {
+  const safeChannelId = escapeAirtableFormulaValue(channelId);
+
+  const records = await airtable(AIRTABLE_MERCHANTS_TABLE)
+    .select({
+      filterByFormula: `{Submit Return Channel ID} = '${safeChannelId}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
+async function findExistingReturnByClientAndOrderNumber(clientId, shopifyOrderNumber) {
+  const safeClientId = escapeAirtableFormulaValue(clientId);
+  const safeOrderNumber = escapeAirtableFormulaValue(shopifyOrderNumber);
+
+  const records = await airtable(AIRTABLE_RETURNS_TABLE)
+    .select({
+      filterByFormula: `AND(
+        ARRAYJOIN({Client}) = '${safeClientId}',
+        {Shopify Order Number} = '${safeOrderNumber}'
+      )`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
+async function createManualIncomingReturn({
+  merchantRecord,
+  submitChannelId,
+  shopifyOrderNumber,
+  vatType
+}) {
+  const merchantFields = merchantRecord.fields || {};
+  const clientLinked = [merchantRecord.id];
+
+  const created = await airtable(AIRTABLE_RETURNS_TABLE).create([
+    {
+      fields: {
+        "Return Status": "Pending Enrichment",
+        "Store Name": asText(merchantFields["Store Name"]),
+        "Shopify Order Number": asText(shopifyOrderNumber),
+        "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
+        "Client": clientLinked,
+        "Source": "Discord Manual Submit",
+        "Returns Channel ID": asText(merchantFields["Returns Channel ID"]),
+        "Submit Return Channel ID": asText(submitChannelId)
+      }
+    }
+  ]);
+
+  return created[0];
 }
 
 /* ---------------- SENDCLOUD ---------------- */
@@ -1007,6 +1065,237 @@ app.post("/create-return", async (req, res) => {
     console.error("/create-return failed:", error);
     return res.status(500).json({
       error: "Failed to create return",
+      details: error.message
+    });
+  }
+});
+
+app.post("/create-manual-return", async (req, res) => {
+  try {
+    const submitChannelId = asText(req.body?.submit_channel_id);
+    const shopifyOrderNumber = asText(req.body?.shopify_order_number);
+    const vatType = asText(req.body?.vat_type);
+
+    if (!submitChannelId) {
+      return res.status(400).json({ error: "Missing submit_channel_id" });
+    }
+
+    if (!shopifyOrderNumber) {
+      return res.status(400).json({ error: "Missing shopify_order_number" });
+    }
+
+    if (!/^\d+$/.test(shopifyOrderNumber)) {
+      return res.status(400).json({
+        error: "shopify_order_number must contain digits only"
+      });
+    }
+
+    if (!["VAT", "Margin"].includes(vatType)) {
+      return res.status(400).json({
+        error: "vat_type must be VAT or Margin"
+      });
+    }
+
+    const merchantRecord = await getMerchantBySubmitReturnChannelId(submitChannelId);
+
+    if (!merchantRecord) {
+      return res.status(404).json({
+        error: "No merchant found for this submit channel"
+      });
+    }
+
+    const merchantFields = merchantRecord.fields || {};
+    const clientRecordId = merchantRecord.id;
+
+    const existing = await findExistingReturnByClientAndOrderNumber(
+      clientRecordId,
+      shopifyOrderNumber
+    );
+
+    if (existing) {
+      return res.status(200).json({
+        already_exists: true,
+        return_record_id: existing.id,
+        return_id: asText(existing.fields["Return ID"]),
+        return_package_url: asText(existing.fields["Packing Slip URL"]),
+        returns_channel_id: asText(merchantFields["Returns Channel ID"]),
+        store_name: asText(merchantFields["Store Name"])
+      });
+    }
+
+    const createdReturn = await createManualIncomingReturn({
+      merchantRecord,
+      submitChannelId,
+      shopifyOrderNumber,
+      vatType
+    });
+
+    return res.status(200).json({
+      ok: true,
+      already_exists: false,
+      return_record_id: createdReturn.id,
+      returns_channel_id: asText(merchantFields["Returns Channel ID"]),
+      store_name: asText(merchantFields["Store Name"])
+    });
+  } catch (error) {
+    console.error("/create-manual-return failed:", error);
+    return res.status(500).json({
+      error: "Failed to create manual return",
+      details: error.message
+    });
+  }
+});
+
+app.post("/process-existing-return", async (req, res) => {
+  try {
+    const returnRecordId = asText(req.body?.return_record_id);
+
+    if (!returnRecordId) {
+      return res.status(400).json({ error: "Missing return_record_id" });
+    }
+
+    const returnRecord = await getReturnRecord(returnRecordId);
+    const returnFields = returnRecord.fields || {};
+
+    const existingPackageUrl = asText(returnFields["Packing Slip URL"]);
+    const existingReturnId = asText(returnFields["Return ID"]);
+    const currentStatus = asText(returnFields["Return Status"]);
+    
+    if (existingPackageUrl && currentStatus === "Label Generated") {
+      return res.status(200).json({
+        ok: true,
+        already_exists: true,
+        return_record_id: returnRecord.id,
+        return_id: existingReturnId,
+        return_package_url: existingPackageUrl,
+        returns_channel_id:
+          asText(returnFields["Returns Channel ID"]),
+        store_name: asText(returnFields["Store Name"]),
+        product_name: asText(returnFields["Product Name"]),
+        sku: asText(returnFields["SKU"]),
+        size: asText(returnFields["Size"]),
+        vat_type: asText(returnFields["VAT Type"]),
+        shopify_order_number: asText(returnFields["Shopify Order Number"])
+      });
+    }
+
+    const clientRecord = first(returnFields["Client"]);
+    if (!clientRecord) {
+      throw new Error("Client not linked on return record");
+    }
+
+    const merchantRecord = await getMerchantByClientId(clientRecord);
+    if (!merchantRecord) {
+      throw new Error(`Merchant not found for client ${clientRecord}`);
+    }
+
+    const merchantFields = merchantRecord.fields;
+
+    const shopDomain = asText(merchantFields["Shopify Store URL"])
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+
+    const accessToken = asText(merchantFields["Shopify Token"]);
+    const shopifyOrderId = asText(returnFields["Shopify Order ID"]);
+
+    if (!shopifyOrderId) {
+      throw new Error("Shopify Order ID missing on Incoming Return");
+    }
+
+    await updateReturnRecord(returnRecord.id, {
+      "Return Status": "Processing",
+      "Error Reason": null
+    });
+
+    const shopifyOrder = await getShopifyOrder({
+      shopDomain,
+      accessToken,
+      orderId: shopifyOrderId
+    });
+
+    const customerAddress = extractCustomerAddress(shopifyOrder);
+    const returnId = must(returnFields["Return ID"], "Return ID");
+
+    const sendcloud = await createSendcloudReturnLabel({
+      customerAddress,
+      returnId,
+      storeName: asText(returnFields["Store Name"]),
+      shopifyOrderNumber: asText(returnFields["Shopify Order Number"])
+    });
+
+    const labelPdf = await fetchBuffer(
+      sendcloud.labelUrl,
+      {
+        Authorization: buildBasicAuthHeader(
+          SENDCLOUD_PUBLIC_KEY,
+          SENDCLOUD_SECRET_KEY
+        )
+      }
+    );
+
+    const packingSlipPdf = await createPackingSlipPdf({
+      merchantName: asText(merchantFields["Store Name"]) || asText(returnFields["Store Name"]) || "Store",
+      merchantLogoUrl: getAttachmentUrl(merchantFields["Logo URL"]) || asText(merchantFields["Logo URL"]),
+      brandColor: asText(merchantFields["Brand Color"]) || "#111111",
+      returnId,
+      airtableRecordId: returnRecord.id,
+      orderNumber: asText(returnFields["Shopify Order Number"]),
+      productName: asText(returnFields["Product Name"]),
+      sku: asText(returnFields["SKU"]),
+      size: asText(returnFields["Size"])
+    });
+
+    const mergedPdf = await mergePdfBuffers([
+      labelPdf,
+      packingSlipPdf
+    ]);
+
+    const returnPackageUrl = await uploadReturnPackage({
+      returnId,
+      pdfBuffer: mergedPdf
+    });
+
+    await updateReturnRecord(returnRecord.id, {
+      "Tracking Number": sendcloud.trackingNumber,
+      "Sendcloud Parcel ID": sendcloud.parcelId,
+      "Return Label URL": sendcloud.labelUrl,
+      "Packing Slip URL": returnPackageUrl,
+      "Return Status": "Label Generated",
+      "Error Reason": null
+    });
+
+    return res.status(200).json({
+      ok: true,
+      return_record_id: returnRecord.id,
+      return_id: returnId,
+      return_package_url: returnPackageUrl,
+      returns_channel_id:
+        asText(returnFields["Returns Channel ID"]) ||
+        asText(merchantFields["Returns Channel ID"]),
+      store_name: asText(returnFields["Store Name"]),
+      product_name: asText(returnFields["Product Name"]),
+      sku: asText(returnFields["SKU"]),
+      size: asText(returnFields["Size"]),
+      vat_type: asText(returnFields["VAT Type"]),
+      shopify_order_number: asText(returnFields["Shopify Order Number"])
+    });
+  } catch (error) {
+    console.error("/process-existing-return failed:", error);
+
+    const returnRecordId = asText(req.body?.return_record_id);
+    if (returnRecordId) {
+      try {
+        await updateReturnRecord(returnRecordId, {
+          "Return Status": "Failed",
+          "Error Reason": error.message
+        });
+      } catch (updateError) {
+        console.error("Failed to mark return as failed:", updateError);
+      }
+    }
+
+    return res.status(500).json({
+      error: "Failed to process existing return",
       details: error.message
     });
   }
