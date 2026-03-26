@@ -676,6 +676,11 @@ async function triggerMakeManualReturnEnrichment({
   returnRecordId,
   merchantRecord,
   shopifyOrderNumber,
+  shopifyOrderId,
+  lineItemId,
+  productName,
+  sku,
+  size,
   vatType
 }) {
   if (!MAKE_MANUAL_RETURN_WEBHOOK_URL) {
@@ -695,6 +700,11 @@ async function triggerMakeManualReturnEnrichment({
       merchant_record_id: merchantRecord.id,
       store_name: asText(merchantFields["Store Name"]),
       shopify_order_number: asText(shopifyOrderNumber),
+      shopify_order_id: asText(shopifyOrderId),
+      line_item_id: asText(lineItemId),
+      product_name: asText(productName),
+      sku: asText(sku),
+      size: asText(size),
       vat_type: asText(vatType)
     })
   });
@@ -842,7 +852,7 @@ async function findExistingReturnByClientOrderAndLineItem(clientId, shopifyOrder
       filterByFormula: `AND(
         ARRAYJOIN({Client}) = '${safeClientId}',
         {Shopify Order Number} = '${safeOrderNumber}',
-        {Shopify Line Item ID} = '${safeLineItemId}'
+        {Shopify Line Item ID} = ${Number(safeLineItemId)}
       )`,
       maxRecords: 1
     })
@@ -1242,6 +1252,11 @@ app.post("/create-manual-return", async (req, res) => {
         returnRecordId: createdReturn.id,
         merchantRecord,
         shopifyOrderNumber,
+        shopifyOrderId,
+        lineItemId,
+        productName,
+        sku,
+        size,
         vatType
       });
     } catch (err) {
@@ -1317,7 +1332,7 @@ app.post("/lookup-manual-return-order", async (req, res) => {
     return res.status(200).json({
       ok: true,
       shopify_order_id: String(shopifyOrder.id),
-      shopify_order_number: asText(shopifyOrder.order_number || shopifyOrderNumber),
+      shopify_order_number: asText(shopifyOrder.name || shopifyOrderNumber).replace(/^#/, ""),
       items
     });
   } catch (error) {
