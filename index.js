@@ -249,7 +249,8 @@ function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
     product_name: asText(item.title),
     sku: asText(item.sku),
     size: asText(item.variant_title),
-    quantity: item.quantity ?? 1
+    quantity: item.quantity ?? 1,
+    selling_price: asText(item.price)
   }));
 }
 
@@ -681,6 +682,7 @@ async function triggerMakeManualReturnEnrichment({
   productName,
   sku,
   size,
+  sellingPrice,
   vatType
 }) {
   if (!MAKE_MANUAL_RETURN_WEBHOOK_URL) {
@@ -705,6 +707,7 @@ async function triggerMakeManualReturnEnrichment({
       product_name: asText(productName),
       sku: asText(sku),
       size: asText(size),
+      selling_price: asText(sellingPrice)
       vat_type: asText(vatType)
     })
   });
@@ -869,6 +872,7 @@ async function createManualIncomingReturn({
   productName,
   sku,
   size,
+  sellingPrice,
   vatType
 }) {
   const merchantFields = merchantRecord.fields || {};
@@ -885,6 +889,7 @@ async function createManualIncomingReturn({
         "Product Name": asText(productName),
         "SKU": asText(sku),
         "Size": asText(size),
+        "Shopify Selling Price": sellingPrice || null,
         "VAT Type": normalizeIncomingReturnVatType("", vatType) || null,
         "Client": clientLinked
       }
@@ -1171,6 +1176,7 @@ app.post("/create-manual-return", async (req, res) => {
     const productName = asText(req.body?.product_name);
     const sku = asText(req.body?.sku);
     const size = asText(req.body?.size);
+    const sellingPrice = asText(req.body?.selling_price);
     const vatType = asText(req.body?.vat_type);
 
     if (!submitChannelId) {
@@ -1241,6 +1247,7 @@ app.post("/create-manual-return", async (req, res) => {
       productName,
       sku,
       size,
+      sellingPrice,
       vatType
     });
     
@@ -1257,6 +1264,7 @@ app.post("/create-manual-return", async (req, res) => {
         productName,
         sku,
         size,
+        sellingPrice,
         vatType
       });
     } catch (err) {
