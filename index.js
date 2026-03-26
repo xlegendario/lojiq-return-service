@@ -707,7 +707,7 @@ async function triggerMakeManualReturnEnrichment({
       product_name: asText(productName),
       sku: asText(sku),
       size: asText(size),
-      selling_price: asText(sellingPrice)
+      selling_price: asText(sellingPrice),
       vat_type: asText(vatType)
     })
   });
