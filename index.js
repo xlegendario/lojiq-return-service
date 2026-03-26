@@ -256,10 +256,9 @@ function extractReturnableItemsFromShopifyOrder(shopifyOrder) {
     sku: asText(item.sku),
     size: asText(item.variant_title),
     quantity: item.quantity ?? 1,
-    selling_price: item.price
+    selling_price: item.price ?? null
   }));
 }
-
 function rgbFromHex(hex) {
   const clean = (hex || "#111111").replace("#", "");
   const normalized = clean.length === 3
