@@ -269,6 +269,54 @@ function findLineItemById(shopifyOrder, lineItemId) {
   return items.find((item) => asText(item.id) === targetId) || null;
 }
 
+function findBestMatchingLineItem(shopifyOrder, {
+  lineItemId,
+  sku,
+  productName,
+  size
+}) {
+  const items = Array.isArray(shopifyOrder?.line_items) ? shopifyOrder.line_items : [];
+
+  if (!items.length) return null;
+
+  const safeLineItemId = asText(lineItemId);
+  const safeSku = asText(sku).toLowerCase();
+  const safeProductName = asText(productName).toLowerCase();
+  const safeSize = asText(size).toLowerCase();
+
+  if (safeLineItemId) {
+    const byId = items.find((item) => asText(item.id) === safeLineItemId);
+    if (byId) return byId;
+  }
+
+  if (safeSku) {
+    const skuMatches = items.filter(
+      (item) => asText(item.sku).toLowerCase() === safeSku
+    );
+    if (skuMatches.length === 1) return skuMatches[0];
+  }
+
+  if (safeProductName || safeSize) {
+    const productMatches = items.filter((item) => {
+      const itemTitle = asText(item.title).toLowerCase();
+      const itemVariantTitle = asText(item.variant_title).toLowerCase();
+
+      const productOk = safeProductName ? itemTitle === safeProductName : true;
+      const sizeOk = safeSize ? itemVariantTitle === safeSize : true;
+
+      return productOk && sizeOk;
+    });
+
+    if (productMatches.length === 1) return productMatches[0];
+  }
+
+  if (items.length === 1) {
+    return items[0];
+  }
+
+  return null;
+}
+
 function rgbFromHex(hex) {
   const clean = (hex || "#111111").replace("#", "");
   const normalized = clean.length === 3
@@ -1127,19 +1175,30 @@ app.post("/create-return", async (req, res) => {
     });
 
     const shopifyLineItemId = asText(orderRecord.fields["Shopify Line Item ID"]);
-    const matchedLineItem = shopifyLineItemId
-      ? findLineItemById(shopifyOrder, shopifyLineItemId)
-      : null;
-
+    const orderSku = asText(orderRecord.fields["SKU"]);
+    const orderProductName = asText(orderRecord.fields["Product Name"]);
+    const orderSize = asText(orderRecord.fields["Size"]);
+    
+    const matchedLineItem = findBestMatchingLineItem(shopifyOrder, {
+      lineItemId: shopifyLineItemId,
+      sku: orderSku,
+      productName: orderProductName,
+      size: orderSize
+    });
+    
+    const resolvedLineItemId = matchedLineItem?.id
+      ? String(matchedLineItem.id)
+      : shopifyLineItemId;
+    
     const currentSellingPriceFromShopify =
       matchedLineItem?.price !== undefined && matchedLineItem?.price !== null
         ? Number(matchedLineItem.price)
         : null;
-
+    
     const currentVariantId = matchedLineItem?.variant_id
       ? String(matchedLineItem.variant_id)
       : "";
-
+    
     const currentProductId = matchedLineItem?.product_id
       ? String(matchedLineItem.product_id)
       : "";
@@ -1212,7 +1271,7 @@ app.post("/create-return", async (req, res) => {
       merchantRecord,
       shopifyOrderNumber: asText(orderRecord.fields["Shopify Order Number"]),
       shopifyOrderId: asText(orderRecord.fields["Shopify Order ID"]),
-      lineItemId: shopifyLineItemId,
+      lineItemId: resolvedLineItemId,
       productId: currentProductId,
       variantId: currentVariantId,
       productName: asText(returnFields["Product Name"]),
