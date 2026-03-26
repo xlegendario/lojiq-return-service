@@ -832,15 +832,17 @@ async function getMerchantBySubmitReturnChannelId(channelId) {
   return records[0] || null;
 }
 
-async function findExistingReturnByClientAndOrderNumber(clientId, shopifyOrderNumber) {
+async function findExistingReturnByClientOrderAndLineItem(clientId, shopifyOrderNumber, lineItemId) {
   const safeClientId = escapeAirtableFormulaValue(clientId);
   const safeOrderNumber = escapeAirtableFormulaValue(shopifyOrderNumber);
+  const safeLineItemId = escapeAirtableFormulaValue(lineItemId);
 
   const records = await airtable(AIRTABLE_RETURNS_TABLE)
     .select({
       filterByFormula: `AND(
         ARRAYJOIN({Client}) = '${safeClientId}',
-        {Shopify Order Number} = '${safeOrderNumber}'
+        {Shopify Order Number} = '${safeOrderNumber}',
+        {Shopify Line Item ID} = '${safeLineItemId}'
       )`,
       maxRecords: 1
     })
@@ -1204,9 +1206,10 @@ app.post("/create-manual-return", async (req, res) => {
     const merchantFields = merchantRecord.fields || {};
     const clientRecordId = merchantRecord.id;
 
-    const existing = await findExistingReturnByClientAndOrderNumber(
+    const existing = await findExistingReturnByClientOrderAndLineItem(
       clientRecordId,
-      shopifyOrderNumber
+      shopifyOrderNumber,
+      lineItemId
     );
 
     if (existing) {
