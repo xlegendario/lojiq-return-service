@@ -24,6 +24,7 @@ const {
   SENDCLOUD_PUBLIC_KEY,
   SENDCLOUD_SECRET_KEY,
   SENDCLOUD_RETURNS_URL = "https://panel.sendcloud.sc/api/v3/returns",
+  SENDCLOUD_PARCEL_TRACKING_BASE_URL = "https://panel.sendcloud.sc/api/v3/parcels/tracking",
   SENDCLOUD_TO_NAME,
   SENDCLOUD_TO_COMPANY,
   SENDCLOUD_TO_ADDRESS_1,
@@ -958,6 +959,23 @@ async function getMerchantBySubmitReturnChannelId(channelId) {
   return records[0] || null;
 }
 
+async function findReturnByTrackingNumber(trackingNumber) {
+  const safeTrackingNumber = escapeAirtableFormulaValue(asText(trackingNumber));
+
+  if (!safeTrackingNumber) {
+    return null;
+  }
+
+  const records = await airtable(AIRTABLE_RETURNS_TABLE)
+    .select({
+      filterByFormula: `TRIM({Tracking Number} & '') = '${safeTrackingNumber}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
 async function findExistingReturnByStoreOrderAndLineItem(storeName, shopifyOrderNumber, lineItemId) {
   const safeStoreName = escapeAirtableFormulaValue(asText(storeName).trim());
   const safeOrderNumber = escapeAirtableFormulaValue(asText(shopifyOrderNumber).replace(/^#/, "").trim());
@@ -1189,6 +1207,125 @@ async function createSendcloudReturnLabel({
     trackingUrl,
     carrier,
     labelUrl
+  };
+}
+
+async function getSendcloudTrackingInfo(trackingNumber) {
+  const safeTrackingNumber = asText(trackingNumber);
+
+  if (!safeTrackingNumber) {
+    throw new Error("Missing tracking number");
+  }
+
+  const res = await fetch(
+    `${SENDCLOUD_PARCEL_TRACKING_BASE_URL}/${encodeURIComponent(safeTrackingNumber)}`,
+    {
+      headers: {
+        Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY),
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(`Sendcloud tracking lookup failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+
+  return body;
+}
+
+function mapTrackingParentStatusToReturnStatus(parentStatus) {
+  const s = asText(parentStatus).toLowerCase();
+
+  if (
+    [
+      "shipment picked up by driver",
+      "parcel en route",
+      "en route to sorting center",
+      "at sorting centre",
+      "being sorted",
+      "sorted",
+      "driver en route",
+      "delivery delayed"
+    ].includes(s)
+  ) {
+    return "In Transit";
+  }
+
+  if (
+    [
+      "ready to send",
+      "announced",
+      "announced: not collected"
+    ].includes(s)
+  ) {
+    return "Label Generated";
+  }
+
+  // Do NOT change Airtable to Received/Delivered from carrier tracking.
+  // You want that to happen only after your own warehouse scan.
+  return "";
+}
+
+async function refreshReturnTrackingStatus(returnRecord) {
+  const returnFields = returnRecord.fields || {};
+
+  const trackingNumber = asText(returnFields["Tracking Number"]);
+  const currentReturnStatus = asText(returnFields["Return Status"]);
+
+  if (!trackingNumber) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "missing tracking number"
+    };
+  }
+
+  const trackingData = await getSendcloudTrackingInfo(trackingNumber);
+
+  const parentStatus =
+    asText(trackingData?.parent_status) ||
+    asText(trackingData?.data?.parent_status);
+
+  const mappedReturnStatus = mapTrackingParentStatusToReturnStatus(parentStatus);
+
+  const fieldsToUpdate = {};
+
+  // keep tracking URL fresh if Sendcloud returns it
+  const refreshedTrackingUrl =
+    asText(trackingData?.tracking_url) ||
+    asText(trackingData?.details?.tracking_url) ||
+    "";
+
+  if (refreshedTrackingUrl) {
+    fieldsToUpdate["Tracking URL"] = refreshedTrackingUrl;
+  }
+
+  // only update when mapping returns a real status
+  if (mappedReturnStatus && mappedReturnStatus !== currentReturnStatus) {
+    fieldsToUpdate["Return Status"] = mappedReturnStatus;
+  }
+
+  if (!Object.keys(fieldsToUpdate).length) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: mappedReturnStatus
+        ? `already ${currentReturnStatus || mappedReturnStatus}`
+        : `no mapped update for parent_status=${parentStatus || "-"}`
+    };
+  }
+
+  await updateReturnRecord(returnRecord.id, fieldsToUpdate);
+
+  return {
+    ok: true,
+    updated: true,
+    tracking_number: trackingNumber,
+    parent_status: parentStatus,
+    updated_fields: fieldsToUpdate
   };
 }
 
@@ -1749,6 +1886,76 @@ app.post("/process-existing-return", async (req, res) => {
 
     return res.status(500).json({
       error: "Failed to process existing return",
+      details: error.message
+    });
+  }
+});
+
+app.post("/refresh-return-tracking-status", async (req, res) => {
+  try {
+    const returnRecordId = asText(req.body?.return_record_id);
+
+    if (!returnRecordId) {
+      return res.status(400).json({ error: "Missing return_record_id" });
+    }
+
+    const returnRecord = await getReturnRecord(returnRecordId);
+    const result = await refreshReturnTrackingStatus(returnRecord);
+
+    return res.status(200).json({
+      ok: true,
+      return_record_id: returnRecordId,
+      ...result
+    });
+  } catch (error) {
+    console.error("/refresh-return-tracking-status failed:", error);
+    return res.status(500).json({
+      error: "Failed to refresh return tracking status",
+      details: error.message
+    });
+  }
+});
+
+app.post("/refresh-return-tracking-status-bulk", async (req, res) => {
+  try {
+    const returnRecordIds = Array.isArray(req.body?.return_record_ids)
+      ? req.body.return_record_ids.map((id) => asText(id)).filter(Boolean)
+      : [];
+
+    if (!returnRecordIds.length) {
+      return res.status(400).json({ error: "Missing return_record_ids[]" });
+    }
+
+    const results = [];
+
+    for (const returnRecordId of returnRecordIds) {
+      try {
+        const returnRecord = await getReturnRecord(returnRecordId);
+        const result = await refreshReturnTrackingStatus(returnRecord);
+
+        results.push({
+          return_record_id: returnRecordId,
+          ok: true,
+          ...result
+        });
+      } catch (error) {
+        results.push({
+          return_record_id: returnRecordId,
+          ok: false,
+          error: error.message
+        });
+      }
+    }
+
+    return res.status(200).json({
+      ok: true,
+      count: results.length,
+      results
+    });
+  } catch (error) {
+    console.error("/refresh-return-tracking-status-bulk failed:", error);
+    return res.status(500).json({
+      error: "Failed to refresh return tracking statuses",
       details: error.message
     });
   }
