@@ -1325,6 +1325,24 @@ app.post("/create-return", async (req, res) => {
       console.error("Failed to trigger Make enrichment from create-return:", err);
     });
 
+    try {
+      await notifyDiscordReturnReady({
+        returnsChannelId:
+          asText(returnFields["Returns Channel ID"]) ||
+          asText(merchantFields["Returns Channel ID"]),
+        returnId,
+        returnPackageUrl,
+        storeName: asText(returnFields["Store Name"]),
+        productName: asText(returnFields["Product Name"]),
+        sku: asText(returnFields["SKU"]),
+        size: asText(returnFields["Size"]),
+        vatType: asText(returnFields["VAT Type"]),
+        shopifyOrderNumber: asText(returnFields["Shopify Order Number"])
+      });
+    } catch (err) {
+      console.error("Failed to notify Discord return ready from create-return:", err);
+    }
+
     return res.status(200).json({
       already_exists: false,
       return_id: returnId,
