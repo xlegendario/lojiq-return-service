@@ -794,7 +794,9 @@ async function notifyDiscordReturnReady({
   sku,
   size,
   vatType,
-  shopifyOrderNumber
+  shopifyOrderNumber,
+  trackingNumber,
+  trackingUrl
 }) {
   const discordBotUrl = process.env.DISCORD_BOT_BASE_URL;
 
@@ -817,7 +819,9 @@ async function notifyDiscordReturnReady({
       sku,
       size,
       vat_type: vatType,
-      shopify_order_number: shopifyOrderNumber
+      shopify_order_number: shopifyOrderNumber,
+      tracking_number: trackingNumber,
+      tracking_url: trackingUrl
     })
   });
 
@@ -1088,7 +1092,6 @@ async function createSendcloudReturnLabel({
   storeName,
   shopifyOrderNumber
 }) {
-
   const countryCode = customerAddress.country;
   const shippingOptionCode = await getReturnShippingOptionCode(countryCode);
   const sendcloudOrderNumber = buildSendcloudOrderNumber(storeName, shopifyOrderNumber);
@@ -1114,7 +1117,7 @@ async function createSendcloudReturnLabel({
   if (!res.ok) {
     throw new Error(`Sendcloud create return failed: ${res.status} ${JSON.stringify(body)}`);
   }
-  
+
   const parcelId = body.parcel_id;
   const sendcloudReturnId = body.return_id;
 
@@ -1122,12 +1125,13 @@ async function createSendcloudReturnLabel({
     throw new Error(`Sendcloud return response missing return_id: ${JSON.stringify(body)}`);
   }
 
-  let labelUrl = null;
+  let labelUrl = "";
+  let trackingNumber = "";
+  let trackingUrl = "";
+  let carrier = "";
 
-  // Poll return details until label exists
   for (let i = 0; i < 20; i++) {
-
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 1500));
 
     const returnRes = await fetch(
       `https://panel.sendcloud.sc/api/v3/returns/${sendcloudReturnId}`,
@@ -1138,12 +1142,37 @@ async function createSendcloudReturnLabel({
       }
     );
 
-    const returnData = await returnRes.json();
+    const returnData = await returnRes.json().catch(() => ({}));
 
-    labelUrl = returnData?.label?.label_printer;
+    // existing
+    labelUrl =
+      returnData?.label?.label_printer ||
+      returnData?.label?.url ||
+      "";
+
+    // try several possible Sendcloud shapes defensively
+    trackingNumber =
+      asText(returnData?.tracking_number) ||
+      asText(returnData?.tracking_no) ||
+      asText(returnData?.parcel?.tracking_number) ||
+      asText(returnData?.parcel?.tracking_no) ||
+      asText(returnData?.tracking_numbers?.[0]) ||
+      "";
+
+    trackingUrl =
+      asText(returnData?.tracking_url) ||
+      asText(returnData?.parcel?.tracking_url) ||
+      asText(returnData?.tracking?.url) ||
+      "";
+
+    carrier =
+      asText(returnData?.carrier?.name) ||
+      asText(returnData?.parcel?.carrier?.name) ||
+      "";
 
     if (labelUrl) {
       console.log("Sendcloud label ready:", labelUrl);
+      console.log("Sendcloud tracking:", { trackingNumber, trackingUrl, carrier });
       break;
     }
 
@@ -1155,8 +1184,10 @@ async function createSendcloudReturnLabel({
   }
 
   return {
-    parcelId: String(parcelId),
-    trackingNumber: "",
+    parcelId: String(parcelId || ""),
+    trackingNumber,
+    trackingUrl,
+    carrier,
     labelUrl
   };
 }
@@ -1301,10 +1332,11 @@ app.post("/create-return", async (req, res) => {
     });
 
     await updateReturnRecord(returnRecord.id, {
-      "Tracking Number": sendcloud.trackingNumber,
-      "Sendcloud Parcel ID": sendcloud.parcelId,
-      "Return Label URL": sendcloud.labelUrl,
-      "Packing Slip URL": returnPackageUrl,
+      "Tracking Number": sendcloud.trackingNumber || null,
+      "Tracking URL": sendcloud.trackingUrl || null,
+      "Sendcloud Parcel ID": sendcloud.parcelId || null,
+      "Return Label URL": sendcloud.labelUrl || null,
+      "Packing Slip URL": returnPackageUrl || null,
       "Return Status": "Label Generated"
     });
 
@@ -1337,7 +1369,9 @@ app.post("/create-return", async (req, res) => {
         sku: asText(returnFields["SKU"]),
         size: asText(returnFields["Size"]),
         vatType: asText(returnFields["VAT Type"]),
-        shopifyOrderNumber: asText(returnFields["Shopify Order Number"])
+        shopifyOrderNumber: asText(returnFields["Shopify Order Number"]),
+        trackingNumber: sendcloud.trackingNumber,
+        trackingUrl: sendcloud.trackingUrl
       });
     } catch (err) {
       console.error("Failed to notify Discord return ready from create-return:", err);
@@ -1655,11 +1689,12 @@ app.post("/process-existing-return", async (req, res) => {
     });
 
     await updateReturnRecord(returnRecord.id, {
-      "Tracking Number": sendcloud.trackingNumber,
-      "Sendcloud Parcel ID": sendcloud.parcelId,
-      "Return Label URL": sendcloud.labelUrl,
-      "Packing Slip URL": returnPackageUrl,
-      "Return Status": "Label Generated",
+      "Tracking Number": sendcloud.trackingNumber || null,
+      "Tracking URL": sendcloud.trackingUrl || null,
+      "Sendcloud Parcel ID": sendcloud.parcelId || null,
+      "Return Label URL": sendcloud.labelUrl || null,
+      "Packing Slip URL": returnPackageUrl || null,
+      "Return Status": "Label Generated"
     });
 
     try {
@@ -1674,7 +1709,9 @@ app.post("/process-existing-return", async (req, res) => {
         sku: asText(returnFields["SKU"]),
         size: asText(returnFields["Size"]),
         vatType: asText(returnFields["VAT Type"]),
-        shopifyOrderNumber: asText(returnFields["Shopify Order Number"])
+        shopifyOrderNumber: asText(returnFields["Shopify Order Number"]),
+        trackingNumber: sendcloud.trackingNumber,
+        trackingUrl: sendcloud.trackingUrl
       });
     } catch (err) {
       console.error("Failed to notify Discord return ready:", err);
@@ -1701,7 +1738,7 @@ app.post("/process-existing-return", async (req, res) => {
     const returnRecordId = asText(req.body?.return_record_id);
     if (returnRecordId) {
       try {
-        await updateReturnRecord(returnRecord.id, {
+        await updateReturnRecord(returnRecordId, {
           "Return Status": "Label Issues",
           "Label Error": error.message
         });
