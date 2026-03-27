@@ -785,6 +785,48 @@ async function triggerMakeManualReturnEnrichment({
   }
 }
 
+async function notifyDiscordReturnReady({
+  returnsChannelId,
+  returnId,
+  returnPackageUrl,
+  storeName,
+  productName,
+  sku,
+  size,
+  vatType,
+  shopifyOrderNumber
+}) {
+  const discordBotUrl = process.env.DISCORD_BOT_BASE_URL;
+
+  if (!discordBotUrl) {
+    console.warn("DISCORD_BOT_BASE_URL not configured, skipping Discord return notification");
+    return;
+  }
+
+  const res = await fetch(`${discordBotUrl}/post-return-package`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      returns_channel_id: returnsChannelId,
+      return_id: returnId,
+      return_package_url: returnPackageUrl,
+      store_name: storeName,
+      product_name: productName,
+      sku,
+      size,
+      vat_type: vatType,
+      shopify_order_number: shopifyOrderNumber
+    })
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Discord notification failed: ${res.status} ${text}`);
+  }
+}
+
 /* ---------------- AIRTABLE ---------------- */
 
 async function getOrderRecord(orderRecordId) {
@@ -1601,6 +1643,24 @@ app.post("/process-existing-return", async (req, res) => {
       "Packing Slip URL": returnPackageUrl,
       "Return Status": "Label Generated",
     });
+
+    try {
+      await notifyDiscordReturnReady({
+        returnsChannelId:
+          asText(returnFields["Returns Channel ID"]) ||
+          asText(merchantFields["Returns Channel ID"]),
+        returnId,
+        returnPackageUrl,
+        storeName: asText(returnFields["Store Name"]),
+        productName: asText(returnFields["Product Name"]),
+        sku: asText(returnFields["SKU"]),
+        size: asText(returnFields["Size"]),
+        vatType: asText(returnFields["VAT Type"]),
+        shopifyOrderNumber: asText(returnFields["Shopify Order Number"])
+      });
+    } catch (err) {
+      console.error("Failed to notify Discord return ready:", err);
+    }
 
     return res.status(200).json({
       ok: true,
