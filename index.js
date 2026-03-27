@@ -1543,7 +1543,7 @@ app.post("/process-existing-return", async (req, res) => {
     }
 
     await updateReturnRecord(returnRecord.id, {
-      "Return Status": "Processing",
+      "Return Status": "Registered",
     });
 
     const shopifyOrder = await getShopifyOrder({
@@ -1623,8 +1623,9 @@ app.post("/process-existing-return", async (req, res) => {
     const returnRecordId = asText(req.body?.return_record_id);
     if (returnRecordId) {
       try {
-        await updateReturnRecord(returnRecordId, {
-          "Return Status": "Failed",
+        await updateReturnRecord(returnRecord.id, {
+          "Return Status": "Label Issues",
+          "Label Error": error.message
         });
       } catch (updateError) {
         console.error("Failed to mark return as failed:", updateError);
